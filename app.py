@@ -6,6 +6,23 @@ import pandas as pd
 # ---------- DB CONNECTION ----------
 conn = sqlite3.connect("kpi_data.db", check_same_thread=False)
 cursor = conn.cursor()
+# ---------- DB INIT (Cloud safe) ----------
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS kpi_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_name TEXT,
+    department TEXT,
+    kpi1 INTEGER,
+    kpi2 INTEGER,
+    kpi3 INTEGER,
+    kpi4 INTEGER,
+    total_score INTEGER,
+    rating TEXT,
+    created_at TEXT
+)
+""")
+conn.commit()
+
 
 # ---------- UI ----------
 st.set_page_config(page_title="Yash Gallery – KPI System", layout="wide")
