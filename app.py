@@ -2,8 +2,6 @@ import streamlit as st
 import sqlite3
 from datetime import datetime
 import pandas as pd
-
-# Plotly (premium charts)
 import plotly.express as px
 
 # ==================================================
@@ -12,12 +10,11 @@ import plotly.express as px
 st.set_page_config(page_title="Yash Gallery – KPI System", page_icon="📊", layout="wide")
 
 # ==================================================
-# GLASS UI + DRAWER SIDEBAR CSS
+# CSS (Glass + White strips)
 # ==================================================
 st.markdown("""
 <style>
-
-/* ---------- Super modern iOS background ---------- */
+/* Background */
 .stApp{
   background:
     radial-gradient(900px 600px at 12% 10%, rgba(99,102,241,0.40), transparent 55%),
@@ -25,12 +22,10 @@ st.markdown("""
     radial-gradient(900px 800px at 55% 95%, rgba(244,114,182,0.30), transparent 55%),
     linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(241,245,249,1) 100%);
 }
+.block-container{ max-width: 1320px; padding-top: 1rem; padding-bottom: 2rem; }
 
-/* layout */
-.block-container{ max-width: 1320px; padding-top: 1.0rem; padding-bottom: 2rem; }
-
-/* ---------- Glass base ---------- */
-.glass {
+/* Glass cards */
+.glass{
   border-radius: 22px;
   border: 1px solid rgba(255,255,255,0.60);
   background: rgba(255,255,255,0.44);
@@ -39,26 +34,31 @@ st.markdown("""
   box-shadow: 0 18px 50px rgba(15,23,42,0.10);
 }
 
-/* Header glass */
-.glassHeader{
-  padding: 14px 16px;
-  border-radius: 22px;
-}
-.title{
-  font-size: 44px;
-  font-weight: 900;
-  letter-spacing: -0.03em;
-  margin: 0;
+/* Slim header */
+.glassHeader{ padding: 14px 16px; border-radius: 22px; }
+.title{ font-size: 44px; font-weight: 900; letter-spacing: -0.03em; margin: 0; display:flex; gap:10px; align-items:center; }
+.sub{ margin-top: 6px; color: rgba(30,41,59,0.75); }
+
+/* White strip (patti) */
+.whiteStrip{
   display:flex;
-  gap:10px;
   align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding: 10px 14px;
+  border-radius: 18px;
+  background: rgba(255,255,255,0.85);
+  border: 1px solid rgba(255,255,255,0.95);
+  box-shadow: 0 10px 30px rgba(15,23,42,0.08);
 }
-.sub{
-  margin-top: 6px;
-  color: rgba(30,41,59,0.75);
+.stripTitle{
+  font-size: 22px;
+  font-weight: 900;
+  margin: 0;
+  color: rgba(15,23,42,0.90);
 }
 
-/* ---------- iOS Segmented Tabs ---------- */
+/* Tabs segmented */
 .stTabs [data-baseweb="tab-list"]{
   gap: 6px;
   padding: 6px;
@@ -78,7 +78,7 @@ st.markdown("""
   border: 1px solid rgba(255,255,255,0.78) !important;
 }
 
-/* Inputs */
+/* Inputs rounding */
 div[data-baseweb="input"] > div,
 div[data-baseweb="select"] > div,
 div[data-baseweb="datepicker"] > div {
@@ -92,16 +92,8 @@ div[data-baseweb="datepicker"] > div {
   font-weight: 850 !important;
 }
 
-/* ---------- Sidebar as SLIDE DRAWER ---------- */
-[data-testid="stSidebar"]{
-  background: transparent !important;
-  border-right: none !important;
-}
-[data-testid="stSidebar"] > div:first-child{
-  padding-top: 0.8rem;
-}
-
-/* We "fake" drawer using glass container inside sidebar */
+/* Sidebar clean */
+[data-testid="stSidebar"]{ background: transparent !important; border-right: none !important; }
 .drawerCard{
   border-radius: 22px;
   padding: 14px;
@@ -110,36 +102,6 @@ div[data-baseweb="datepicker"] > div {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   box-shadow: 0 18px 50px rgba(15,23,42,0.12);
-}
-
-/* Drawer animation using body attr we control with a query param-like flag (st.session_state) */
-.drawerClosed [data-testid="stSidebar"]{
-  width: 72px !important;
-  min-width: 72px !important;
-}
-.drawerClosed [data-testid="stSidebar"] > div:first-child{
-  width: 72px !important;
-}
-.drawerClosed .drawerHide{
-  display:none !important;
-}
-.drawerClosed .drawerOnlyIcon{
-  display:flex !important;
-}
-.drawerOnlyIcon{
-  display:none;
-  align-items:center;
-  justify-content:center;
-  height: 42px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.55);
-  background: rgba(255,255,255,0.40);
-  backdrop-filter: blur(16px);
-}
-
-/* Smooth transition */
-[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child{
-  transition: width 240ms ease-in-out;
 }
 
 /* Metric glass */
@@ -152,26 +114,9 @@ div[data-baseweb="datepicker"] > div {
   box-shadow: 0 14px 40px rgba(15,23,42,0.08);
 }
 
-/* Section title */
-.h2{ font-size: 22px; font-weight: 900; margin: 0 0 10px 0; }
-
-/* Hide footer */
 footer {visibility:hidden;}
-
 </style>
 """, unsafe_allow_html=True)
-
-# ==================================================
-# Drawer state (slider feel)
-# ==================================================
-if "drawer_open" not in st.session_state:
-    st.session_state.drawer_open = True
-
-# Apply drawer class to body
-if not st.session_state.drawer_open:
-    st.markdown("<script>document.body.classList.add('drawerClosed');</script>", unsafe_allow_html=True)
-else:
-    st.markdown("<script>document.body.classList.remove('drawerClosed');</script>", unsafe_allow_html=True)
 
 # ==================================================
 # DB
@@ -209,22 +154,18 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.write("")
 
 # ==================================================
-# SIDEBAR DRAWER (with toggle)
+# SIDEBAR (Filters title in white strip)
 # ==================================================
 with st.sidebar:
     st.markdown('<div class="drawerCard">', unsafe_allow_html=True)
 
-    colA, colB = st.columns([1, 3])
-    with colA:
-        if st.button("☰", use_container_width=True):
-            st.session_state.drawer_open = not st.session_state.drawer_open
-            st.rerun()
-    with colB:
-        st.markdown('<div class="drawerHide"><b>Filters</b></div>', unsafe_allow_html=True)
+    st.markdown("""
+      <div class="whiteStrip">
+        <div class="stripTitle">🔎 Filters</div>
+      </div>
+    """, unsafe_allow_html=True)
 
-    st.markdown('<div class="drawerOnlyIcon">🔎</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="drawerHide">', unsafe_allow_html=True)
+    st.write("")
 
     dept_rows = cursor.execute("""
         SELECT DISTINCT department FROM kpi_entries
@@ -232,14 +173,12 @@ with st.sidebar:
         ORDER BY department
     """).fetchall()
     dept_list = [r[0] for r in dept_rows] if dept_rows else []
-
     dept_filter = st.selectbox("Department", ["All"] + dept_list)
 
     date_range = st.date_input("Date Range (optional)", value=[])
     name_search = st.text_input("Search Employee", placeholder="Type name…")
 
-    st.markdown('</div>', unsafe_allow_html=True)  # drawerHide
-    st.markdown('</div>', unsafe_allow_html=True)  # drawerCard
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
 # TABS
@@ -247,11 +186,18 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["📝 Entry", "📈 Dashboard", "📋 Records"])
 
 # ==================================================
-# TAB 1 – ENTRY (Glass + iOS sliders)
+# TAB 1 – ENTRY (white strip heading + number inputs)
 # ==================================================
 with tab1:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
-    st.markdown('<div class="h2">Employee KPI Entry</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+      <div class="whiteStrip">
+        <div class="stripTitle">Employee KPI Entry</div>
+      </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
 
     with st.form("kpi_form", clear_on_submit=True):
         c1, c2 = st.columns([2, 1])
@@ -263,18 +209,15 @@ with tab1:
                 ["Fabric", "Merchant", "Sampling", "Cutting", "Finishing", "Dispatch", "Admin", "Sales", "Accounts"]
             )
 
-        st.caption("iOS sliders (1–100)")
-        s1, s2 = st.columns(2)
-        s3, s4 = st.columns(2)
-
-        with s1:
-            kpi1 = st.slider("KPI 1", 1, 100, 50)
-        with s2:
-            kpi2 = st.slider("KPI 2", 1, 100, 50)
-        with s3:
-            kpi3 = st.slider("KPI 3", 1, 100, 50)
-        with s4:
-            kpi4 = st.slider("KPI 4", 1, 100, 50)
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            kpi1 = st.number_input("KPI 1 (1–100)", min_value=1, max_value=100, value=1, step=1)
+        with k2:
+            kpi2 = st.number_input("KPI 2 (1–100)", min_value=1, max_value=100, value=1, step=1)
+        with k3:
+            kpi3 = st.number_input("KPI 3 (1–100)", min_value=1, max_value=100, value=1, step=1)
+        with k4:
+            kpi4 = st.number_input("KPI 4 (1–100)", min_value=1, max_value=100, value=1, step=1)
 
         submitted = st.form_submit_button("✅ Calculate & Save")
 
@@ -290,7 +233,6 @@ with tab1:
                 "Average" if total >= 160 else
                 "Needs Improvement"
             )
-
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             cursor.execute("""
@@ -306,7 +248,7 @@ with tab1:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# LOAD DATA (filters)
+# LOAD DATA
 # ==================================================
 q = """
 SELECT employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at
@@ -336,11 +278,18 @@ df = pd.DataFrame(rows, columns=[
 ])
 
 # ==================================================
-# TAB 2 – DASHBOARD (Premium charts)
+# TAB 2 – DASHBOARD
 # ==================================================
 with tab2:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
-    st.markdown('<div class="h2">Dashboard</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+      <div class="whiteStrip">
+        <div class="stripTitle">Dashboard</div>
+      </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
 
     if df.empty:
         st.info("No data found for selected filters.")
@@ -378,7 +327,14 @@ with tab2:
 # ==================================================
 with tab3:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
-    st.markdown('<div class="h2">Records</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+      <div class="whiteStrip">
+        <div class="stripTitle">Records</div>
+      </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
 
     if df.empty:
         st.info("No records available.")
