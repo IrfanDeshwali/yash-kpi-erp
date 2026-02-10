@@ -166,6 +166,12 @@ df = pd.DataFrame(rows, columns=[
 ])
 
 # safe parse for display (kabhi kabhi old formats honge)
-df["Created At"] = pd.to_datetime(df["Created At"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
+df["Created At"] = df["Created At"] = pd.to_datetime(
+    df["Created At"],
+    errors="coerce"
+)
+df = df.dropna(subset=["Created At"])
+df["Created Date"] = df["Created At"].dt.date
+, errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
 
 st.dataframe(df, use_container_width=True, hide_index=True)
