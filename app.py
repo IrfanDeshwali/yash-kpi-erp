@@ -51,7 +51,7 @@ with st.form("kpi_form", clear_on_submit=True):
     c1, c2 = st.columns([2, 1])
 
     with c1:
-        employee_name = st.text_input("Employee Name", placeholder="e.g., Sandeep Kumar")
+        employee_name = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
     with c2:
         department = st.selectbox(
             "Department",
