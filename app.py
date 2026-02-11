@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 from datetime import datetime
 import pandas as pd
 
@@ -18,14 +18,14 @@ st.markdown("""
 # ---------------- DB ----------------
 @st.cache_resource
 def get_conn():
-    return sqlite3.connect("kpi_data.db", check_same_thread=False)
+    return psycopg2.connect(st.secrets["NEON_DATABASE_URL"])
 
 conn = get_conn()
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS kpi_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     employee_name TEXT NOT NULL,
     department TEXT NOT NULL,
     kpi1 INTEGER,
@@ -34,11 +34,10 @@ CREATE TABLE IF NOT EXISTS kpi_entries (
     kpi4 INTEGER,
     total_score INTEGER,
     rating TEXT,
-    created_at TEXT
+    created_at TIMESTAMP
 )
 """)
 conn.commit()
-
 # ---------------- HEADER ----------------
 st.title("📊 Yash Gallery – KPI System")
 st.caption("Simple KPI software – Phase 1")
@@ -90,7 +89,7 @@ if submitted:
         cursor.execute("""
             INSERT INTO kpi_entries
             (employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (emp, department, int(kpi1), int(kpi2), int(kpi3), int(kpi4), total, rating, created_at))
         conn.commit()
 
@@ -123,12 +122,12 @@ WHERE 1=1
 params = []
 
 if dept_filter != "All":
-    base_q += " AND department = ?"
+    base_q += " AND department = %s"
     params.append(dept_filter)
 
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_date, end_date = date_range
-    base_q += " AND date(created_at) BETWEEN date(?) AND date(?)"
+    base_q += " AND DATE(created_at) BETWEEN %s AND %s"
     params.append(str(start_date))
     params.append(str(end_date))
 
