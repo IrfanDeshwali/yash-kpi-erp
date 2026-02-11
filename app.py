@@ -33,7 +33,7 @@ def build_db_url_from_secrets() -> str | None:
         url += f"?{params}"
     return url
 
-def get_database_url() -> str:
+def get_database_url("DATABASE_URL", "") -> str:
     url = build_db_url_from_secrets()
     if url:
         return url
