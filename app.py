@@ -20,6 +20,8 @@ st.markdown("""
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;
   border:1px solid #e5e7eb;background:#f8fafc;font-size:12px;color:#334155}
 .hline{height:1px;background:#e5e7eb;margin:10px 0}
+[data-testid="stSidebar"]{width:300px}
+[data-testid="stSidebar"] > div:first-child{width:300px}
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,12 +68,12 @@ CREATE TABLE IF NOT EXISTS kpi_entries (
     employee_name TEXT NOT NULL,
     department TEXT NOT NULL,
     kpi1 INTEGER, kpi2 INTEGER, kpi3 INTEGER, kpi4 INTEGER,
-    total_score INTEGER, rating TEXT,
+    total_score DOUBLE PRECISION,
+    rating TEXT,
     created_at TIMESTAMP
 )
 """)
 
-# ---------------- SETTINGS TABLES (CONTROL PANEL) ----------------
 run("""
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
@@ -102,19 +104,6 @@ CREATE TABLE IF NOT EXISTS rating_rules (
 )
 """)
 
-run("""
-CREATE TABLE IF NOT EXISTS departments (
-    dept_name TEXT PRIMARY KEY
-)
-""")
-
-run("""
-CREATE TABLE IF NOT EXISTS employees (
-    emp_name TEXT PRIMARY KEY,
-    dept_name TEXT NOT NULL
-)
-""")
-
 # ---------------- DEFAULTS INIT ----------------
 def set_default_if_missing(key, value):
     run("""
@@ -123,11 +112,10 @@ def set_default_if_missing(key, value):
     ON CONFLICT (key) DO NOTHING
     """, [key, value])
 
-set_default_if_missing("admin_password", "1234")                 # default admin
-set_default_if_missing("allow_import", "1")                      # 1=yes
-set_default_if_missing("allow_edit_delete", "1")                 # 1=yes
+set_default_if_missing("admin_password", "1234")     # default admin
+set_default_if_missing("allow_import", "1")          # 1=yes
+set_default_if_missing("allow_edit_delete", "1")     # 1=yes
 
-# KPI labels defaults
 for k, lbl in [("kpi1","KPI 1"), ("kpi2","KPI 2"), ("kpi3","KPI 3"), ("kpi4","KPI 4")]:
     run("""
     INSERT INTO kpi_master(kpi_key, kpi_label)
@@ -135,7 +123,6 @@ for k, lbl in [("kpi1","KPI 1"), ("kpi2","KPI 2"), ("kpi3","KPI 3"), ("kpi4","KP
     ON CONFLICT (kpi_key) DO NOTHING
     """, [k, lbl])
 
-# KPI weights defaults (sum=100)
 for k, w in [("kpi1",25), ("kpi2",25), ("kpi3",25), ("kpi4",25)]:
     run("""
     INSERT INTO kpi_weights(kpi_key, weight)
@@ -143,20 +130,13 @@ for k, w in [("kpi1",25), ("kpi2",25), ("kpi3",25), ("kpi4",25)]:
     ON CONFLICT (kpi_key) DO NOTHING
     """, [k, w])
 
-# Rating rules defaults (based on weighted score out of 100)
-# Excellent >= 80, Good >= 60, Average >= 40 else Needs Improvement
 run("""
 INSERT INTO rating_rules(id, excellent_min, good_min, average_min)
 VALUES (1, 80, 60, 40)
 ON CONFLICT (id) DO NOTHING
 """)
 
-# Departments defaults (optional)
-default_depts = ["Fabric", "Merchant", "Sampling", "Cutting", "Finishing", "Dispatch", "Admin", "Sales", "Accounts"]
-for d in default_depts:
-    run("INSERT INTO departments(dept_name) VALUES (%s) ON CONFLICT DO NOTHING", [d])
-
-# ---------------- GETTERS ----------------
+# ---------------- SETTINGS GET/SET ----------------
 def get_setting(key, default=""):
     r = run("SELECT value FROM app_settings WHERE key=%s", [key], fetch=True)
     return r[0][0] if r else default
@@ -171,12 +151,12 @@ def set_setting(key, value):
 def get_kpi_labels():
     rows = run("SELECT kpi_key, kpi_label FROM kpi_master ORDER BY kpi_key", fetch=True) or []
     d = {k:v for k,v in rows}
-    return d["kpi1"], d["kpi2"], d["kpi3"], d["kpi4"]
+    return d.get("kpi1","KPI 1"), d.get("kpi2","KPI 2"), d.get("kpi3","KPI 3"), d.get("kpi4","KPI 4")
 
 def get_kpi_weights():
     rows = run("SELECT kpi_key, weight FROM kpi_weights ORDER BY kpi_key", fetch=True) or []
     d = {k:int(w) for k,w in rows}
-    return d["kpi1"], d["kpi2"], d["kpi3"], d["kpi4"]
+    return d.get("kpi1",25), d.get("kpi2",25), d.get("kpi3",25), d.get("kpi4",25)
 
 def get_rating_rules():
     r = run("SELECT excellent_min, good_min, average_min FROM rating_rules WHERE id=1", fetch=True)
@@ -186,11 +166,10 @@ def get_rating_rules():
 
 def calc_weighted_score(k1,k2,k3,k4):
     w1,w2,w3,w4 = get_kpi_weights()
-    # weighted out of 100
     score = (k1*w1 + k2*w2 + k3*w3 + k4*w4) / 100.0
     return round(score, 2)
 
-def calc_rating_from_score(score_0_100: float):
+def calc_rating(score_0_100: float):
     ex, gd, av = get_rating_rules()
     if score_0_100 >= ex: return "Excellent"
     if score_0_100 >= gd: return "Good"
@@ -201,21 +180,25 @@ def calc_rating_from_score(score_0_100: float):
 if "is_admin" not in st.session_state:
     st.session_state["is_admin"] = False
 
-# Sidebar filters
+# ---------------- SIDEBAR FILTERS (100% SAFE from kpi_entries) ----------------
 st.sidebar.markdown("## 🔎 Filters")
 
-dept_rows = run("SELECT dept_name FROM departments ORDER BY dept_name", fetch=True) or []
-dept_list = [r[0] for r in dept_rows] if dept_rows else []
+dept_rows = run(
+    "SELECT DISTINCT department FROM kpi_entries WHERE department IS NOT NULL AND department<>'' ORDER BY department",
+    fetch=True
+) or []
+dept_list = [r[0] for r in dept_rows]
 dept_filter = st.sidebar.selectbox("Department", ["All"] + dept_list)
 
-emp_q = "SELECT emp_name FROM employees WHERE 1=1"
+emp_q = "SELECT DISTINCT employee_name FROM kpi_entries WHERE employee_name IS NOT NULL AND employee_name<>''"
 emp_p = []
 if dept_filter != "All":
-    emp_q += " AND dept_name=%s"
+    emp_q += " AND department=%s"
     emp_p.append(dept_filter)
-emp_q += " ORDER BY emp_name"
+emp_q += " ORDER BY employee_name"
+
 emp_rows = run(emp_q, emp_p, fetch=True) or []
-emp_list = [r[0] for r in emp_rows] if emp_rows else []
+emp_list = [r[0] for r in emp_rows]
 emp_filter = st.sidebar.selectbox("Employee", ["All"] + emp_list)
 
 date_range = st.sidebar.date_input("Date Range (optional)", value=[])
@@ -228,7 +211,7 @@ if st.sidebar.button("Login"):
     st.session_state["is_admin"] = (pw == get_setting("admin_password", "1234"))
     st.sidebar.success("Admin mode ON" if st.session_state["is_admin"] else "Wrong password")
 
-is_admin = st.session_state["is_admin"]
+is_admin = st.session_state.get("is_admin", False)
 allow_import = get_setting("allow_import","1") == "1"
 allow_edit_delete = get_setting("allow_edit_delete","1") == "1"
 
@@ -237,12 +220,13 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 c1, c2 = st.columns([3,2])
 with c1:
     st.title("📊 Yash Gallery – KPI System")
-    st.caption("Professional • Dynamic Settings • Dashboard • Reports • Admin Control Panel")
+    st.caption("Dashboard • Entry • Records • Reports • Control Panel (No-code settings)")
 with c2:
     st.markdown(
         f"<span class='badge'>Database: Neon</span> "
         f"<span class='badge'>Admin: {'ON' if is_admin else 'OFF'}</span> "
-        f"<span class='badge'>Import: {'ON' if allow_import else 'OFF'}</span>",
+        f"<span class='badge'>Import: {'ON' if allow_import else 'OFF'}</span> "
+        f"<span class='badge'>Edit/Delete: {'ON' if allow_edit_delete else 'OFF'}</span>",
         unsafe_allow_html=True
     )
 st.markdown("</div>", unsafe_allow_html=True)
@@ -259,7 +243,7 @@ menu = option_menu(
     },
 )
 
-# ---------------- FETCH FILTERED KPI ENTRIES ----------------
+# ---------------- QUERY FILTERED KPI ENTRIES ----------------
 q = """
 SELECT id, employee_name, department, kpi1,kpi2,kpi3,kpi4, total_score, rating, created_at
 FROM kpi_entries
@@ -267,18 +251,14 @@ WHERE 1=1
 """
 p = []
 if dept_filter != "All":
-    q += " AND department=%s"
-    p.append(dept_filter)
+    q += " AND department=%s"; p.append(dept_filter)
 if emp_filter != "All":
-    q += " AND employee_name=%s"
-    p.append(emp_filter)
+    q += " AND employee_name=%s"; p.append(emp_filter)
 if search_text.strip():
-    q += " AND employee_name ILIKE %s"
-    p.append(f"%{search_text.strip()}%")
+    q += " AND employee_name ILIKE %s"; p.append(f"%{search_text.strip()}%")
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     s,e = date_range
-    q += " AND DATE(created_at) BETWEEN %s AND %s"
-    p += [str(s), str(e)]
+    q += " AND DATE(created_at) BETWEEN %s AND %s"; p += [str(s), str(e)]
 q += " ORDER BY created_at DESC"
 
 rows = run(q, p, fetch=True) or []
@@ -329,24 +309,12 @@ if menu == "Entry":
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("➕ Add KPI Entry")
 
-    # Dynamic employee & dept from master tables
-    dept_rows2 = run("SELECT dept_name FROM departments ORDER BY dept_name", fetch=True) or []
-    dept_choices = [r[0] for r in dept_rows2] if dept_rows2 else default_depts
-
-    emp_rows2 = run("SELECT emp_name FROM employees ORDER BY emp_name", fetch=True) or []
-    emp_choices = [r[0] for r in emp_rows2] if emp_rows2 else []
-
     with st.form("add_form", clear_on_submit=True):
         a1, a2 = st.columns([2,1])
         with a1:
-            if emp_choices:
-                employee_name = st.selectbox("Employee", ["-- Select --"] + emp_choices)
-                employee_text = st.text_input("Or type new employee (optional)", placeholder="New employee name")
-            else:
-                employee_name = "-- Select --"
-                employee_text = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
+            emp = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
         with a2:
-            department = st.selectbox("Department", dept_choices)
+            dept = st.text_input("Department", placeholder="e.g., Fabric")
 
         k1,k2,k3,k4 = st.columns(4)
         with k1: v1 = st.number_input(kpi1_lbl, 1,100,1,1)
@@ -357,38 +325,22 @@ if menu == "Entry":
         ok = st.form_submit_button("✅ Save Entry")
 
     if ok:
-        # decide employee value
-        emp = ""
-        if employee_text.strip():
-            emp = employee_text.strip()
-        elif employee_name != "-- Select --":
-            emp = employee_name.strip()
-
-        if emp == "":
-            st.error("Employee required.")
+        if not emp.strip() or not dept.strip():
+            st.error("Employee + Department required.")
         else:
-            weighted = calc_weighted_score(int(v1),int(v2),int(v3),int(v4))
-            rating = calc_rating_from_score(weighted)
-
+            score = calc_weighted_score(int(v1),int(v2),int(v3),int(v4))
+            rating = calc_rating(score)
             run("""
                 INSERT INTO kpi_entries (employee_name, department, kpi1,kpi2,kpi3,kpi4, total_score, rating, created_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, [emp, department, int(v1),int(v2),int(v3),int(v4), float(weighted), rating, datetime.now()])
-
-            # auto add employee to master if not exists
-            run("""
-                INSERT INTO employees(emp_name, dept_name)
-                VALUES (%s,%s)
-                ON CONFLICT (emp_name) DO NOTHING
-            """, [emp, department])
-
-            st.success(f"Saved ✅ | Score: {weighted} | Rating: {rating}")
+            """, [emp.strip(), dept.strip(), int(v1),int(v2),int(v3),int(v4), float(score), rating, datetime.now()])
+            st.success(f"Saved ✅ | Score: {score} | Rating: {rating}")
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
-# Records
+# Records (Export/Import + Edit/Delete)
 # ============================================================
 if menu == "Records":
     left, right = st.columns([2,1], gap="large")
@@ -396,10 +348,7 @@ if menu == "Records":
     with left:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("📋 Records Table (Filtered)")
-        show_df = df.copy()
-        show_df = show_df.rename(columns={
-            "KPI1": kpi1_lbl, "KPI2": kpi2_lbl, "KPI3": kpi3_lbl, "KPI4": kpi4_lbl
-        })
+        show_df = df.copy().rename(columns={"KPI1":kpi1_lbl,"KPI2":kpi2_lbl,"KPI3":kpi3_lbl,"KPI4":kpi4_lbl})
         st.dataframe(show_df.drop(columns=["ID"]) if len(show_df) else show_df, use_container_width=True, hide_index=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -413,11 +362,7 @@ if menu == "Records":
         up = st.file_uploader("Import CSV", type=["csv"])
         can_import_now = is_admin and allow_import
         if st.button("Import Now", disabled=not can_import_now):
-            if not is_admin:
-                st.warning("Admin login required.")
-            elif not allow_import:
-                st.warning("Import is disabled in Control Panel.")
-            elif up is None:
+            if up is None:
                 st.warning("Upload CSV first.")
             else:
                 imp = pd.read_csv(up)
@@ -432,25 +377,16 @@ if menu == "Records":
                         imp[c] = pd.to_numeric(imp[c], errors="coerce").fillna(0).astype(int)
 
                     data = []
-                    emp_master = []
                     for _, r in imp.iterrows():
-                        weighted = calc_weighted_score(int(r["KPI1"]),int(r["KPI2"]),int(r["KPI3"]),int(r["KPI4"]))
-                        rating = calc_rating_from_score(weighted)
-                        created = datetime.now()
+                        score = calc_weighted_score(int(r["KPI1"]),int(r["KPI2"]),int(r["KPI3"]),int(r["KPI4"]))
+                        rating = calc_rating(score)
                         data.append((r["Employee"], r["Department"], int(r["KPI1"]), int(r["KPI2"]), int(r["KPI3"]), int(r["KPI4"]),
-                                     float(weighted), rating, created))
-                        emp_master.append((r["Employee"], r["Department"]))
+                                     float(score), rating, datetime.now()))
 
                     run("""
                         INSERT INTO kpi_entries (employee_name, department, kpi1,kpi2,kpi3,kpi4,total_score,rating,created_at)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, many=True, data=data)
-
-                    run("""
-                        INSERT INTO employees(emp_name, dept_name)
-                        VALUES (%s,%s)
-                        ON CONFLICT (emp_name) DO NOTHING
-                    """, many=True, data=emp_master)
 
                     st.success(f"Imported {len(data)} rows ✅")
                     st.rerun()
@@ -484,33 +420,23 @@ if menu == "Records":
             k3 = st.number_input(kpi3_lbl, 1,100,int(row["KPI3"]),1, key="rk3")
             k4 = st.number_input(kpi4_lbl, 1,100,int(row["KPI4"]),1, key="rk4")
     with e3:
-        weighted = calc_weighted_score(int(k1),int(k2),int(k3),int(k4))
-        rating = calc_rating_from_score(weighted)
-        st.markdown(f"**Score:** {weighted}")
+        score = calc_weighted_score(int(k1),int(k2),int(k3),int(k4))
+        rating = calc_rating(score)
+        st.markdown(f"**Score:** {score}")
         st.markdown(f"**Rating:** {rating}")
 
         can_edit = is_admin and allow_edit_delete
         if st.button("Update", disabled=not can_edit):
-            if not is_admin:
-                st.warning("Admin login required.")
-            elif not allow_edit_delete:
-                st.warning("Edit/Delete disabled in Control Panel.")
-            else:
-                run("""
-                    UPDATE kpi_entries SET employee_name=%s, department=%s,
-                      kpi1=%s,kpi2=%s,kpi3=%s,kpi4=%s,total_score=%s,rating=%s
-                    WHERE id=%s
-                """, [emp.strip(), dept.strip(), int(k1),int(k2),int(k3),int(k4), float(weighted), rating, int(rec_id)])
-                st.success("Updated ✅"); st.rerun()
+            run("""
+                UPDATE kpi_entries SET employee_name=%s, department=%s,
+                  kpi1=%s,kpi2=%s,kpi3=%s,kpi4=%s,total_score=%s,rating=%s
+                WHERE id=%s
+            """, [emp.strip(), dept.strip(), int(k1),int(k2),int(k3),int(k4), float(score), rating, int(rec_id)])
+            st.success("Updated ✅"); st.rerun()
 
         if st.button("Delete", disabled=not can_edit):
-            if not is_admin:
-                st.warning("Admin login required.")
-            elif not allow_edit_delete:
-                st.warning("Edit/Delete disabled in Control Panel.")
-            else:
-                run("DELETE FROM kpi_entries WHERE id=%s", [int(rec_id)])
-                st.warning("Deleted 🗑"); st.rerun()
+            run("DELETE FROM kpi_entries WHERE id=%s", [int(rec_id)])
+            st.warning("Deleted 🗑"); st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -552,12 +478,12 @@ if menu == "Reports":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
-# Control Panel (NO CODE EDIT NEEDED)
+# Control Panel
 # ============================================================
 if menu == "Control Panel":
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🛡 Control Panel (Admin Only)")
-    st.markdown("<div class='small'>Yahan se Departments, Employees, KPI Names, Weights, Rating rules, Permissions sab manage hoga.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='small'>Yahan se KPI Names, Weights, Rating Rules, Permissions, Password sab manage hoga.</div>", unsafe_allow_html=True)
     st.markdown("<div class='hline'></div>", unsafe_allow_html=True)
 
     if not is_admin:
@@ -565,9 +491,8 @@ if menu == "Control Panel":
         st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["KPI Names", "KPI Weights", "Rating Rules", "Departments & Employees", "Permissions & Password"])
+    tab1, tab2, tab3, tab4 = st.tabs(["KPI Names", "KPI Weights", "Rating Rules", "Permissions & Password"])
 
-    # ---- KPI Names ----
     with tab1:
         st.markdown("### ✏️ KPI Labels")
         k1,k2,k3,k4 = get_kpi_labels()
@@ -580,10 +505,8 @@ if menu == "Control Panel":
             run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi2'", [n2.strip() or "KPI 2"])
             run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi3'", [n3.strip() or "KPI 3"])
             run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi4'", [n4.strip() or "KPI 4"])
-            st.success("Saved ✅")
-            st.rerun()
+            st.success("Saved ✅"); st.rerun()
 
-    # ---- KPI Weights ----
     with tab2:
         st.markdown("### ⚖️ KPI Weights (Total 100%)")
         w1,w2,w3,w4 = get_kpi_weights()
@@ -591,10 +514,8 @@ if menu == "Control Panel":
         nw2 = st.number_input("Weight KPI2", 0, 100, int(w2), 1)
         nw3 = st.number_input("Weight KPI3", 0, 100, int(w3), 1)
         nw4 = st.number_input("Weight KPI4", 0, 100, int(w4), 1)
-
-        totalw = nw1 + nw2 + nw3 + nw4
-        st.info(f"Current Total Weight = {totalw}")
-
+        totalw = nw1+nw2+nw3+nw4
+        st.info(f"Total Weight = {totalw}")
         if st.button("Save Weights"):
             if totalw != 100:
                 st.error("Total weights must be exactly 100.")
@@ -603,87 +524,24 @@ if menu == "Control Panel":
                 run("UPDATE kpi_weights SET weight=%s WHERE kpi_key='kpi2'", [int(nw2)])
                 run("UPDATE kpi_weights SET weight=%s WHERE kpi_key='kpi3'", [int(nw3)])
                 run("UPDATE kpi_weights SET weight=%s WHERE kpi_key='kpi4'", [int(nw4)])
-                st.success("Weights saved ✅ (New entries will use these weights)")
-                st.rerun()
+                st.success("Weights saved ✅"); st.rerun()
 
-    # ---- Rating Rules ----
     with tab3:
         st.markdown("### ⭐ Rating Rules (Score out of 100)")
         ex, gd, av = get_rating_rules()
         nex = st.number_input("Excellent Min", 0, 100, int(ex), 1)
         ngd = st.number_input("Good Min", 0, 100, int(gd), 1)
         nav = st.number_input("Average Min", 0, 100, int(av), 1)
-
-        st.caption("Logic: Excellent >= ex, Good >= gd, Average >= av else Needs Improvement")
-
+        st.caption("Excellent >= ex, Good >= gd, Average >= av else Needs Improvement")
         if st.button("Save Rating Rules"):
             if not (nex >= ngd >= nav):
                 st.error("Rule should satisfy: Excellent >= Good >= Average")
             else:
                 run("UPDATE rating_rules SET excellent_min=%s, good_min=%s, average_min=%s WHERE id=1",
                     [int(nex), int(ngd), int(nav)])
-                st.success("Saved ✅")
-                st.rerun()
+                st.success("Saved ✅"); st.rerun()
 
-    # ---- Departments & Employees ----
     with tab4:
-        st.markdown("### 🏭 Departments")
-        dcol1, dcol2 = st.columns([1.2,1])
-        with dcol1:
-            new_dept = st.text_input("Add Department")
-            if st.button("Add Department"):
-                if new_dept.strip():
-                    run("INSERT INTO departments(dept_name) VALUES (%s) ON CONFLICT DO NOTHING", [new_dept.strip()])
-                    st.success("Added ✅")
-                    st.rerun()
-        with dcol2:
-            dept_rows3 = run("SELECT dept_name FROM departments ORDER BY dept_name", fetch=True) or []
-            dept_choices = [r[0] for r in dept_rows3]
-            del_dept = st.selectbox("Delete Department", ["-- Select --"] + dept_choices)
-            if st.button("Delete Department"):
-                if del_dept != "-- Select --":
-                    # NOTE: if employees exist in this dept, you may reassign them first
-                    run("DELETE FROM departments WHERE dept_name=%s", [del_dept])
-                    st.warning("Deleted ✅")
-                    st.rerun()
-
-        st.markdown("<div class='hline'></div>", unsafe_allow_html=True)
-        st.markdown("### 👥 Employees")
-        ecol1, ecol2 = st.columns([1.2,1])
-
-        dept_rows4 = run("SELECT dept_name FROM departments ORDER BY dept_name", fetch=True) or []
-        dept_choices2 = [r[0] for r in dept_rows4]
-
-        with ecol1:
-            emp_name = st.text_input("Employee Name")
-            emp_dept = st.selectbox("Employee Department", dept_choices2 if dept_choices2 else default_depts)
-            if st.button("Add/Update Employee"):
-                if emp_name.strip():
-                    run("""
-                        INSERT INTO employees(emp_name, dept_name)
-                        VALUES (%s,%s)
-                        ON CONFLICT (emp_name) DO UPDATE SET dept_name=EXCLUDED.dept_name
-                    """, [emp_name.strip(), emp_dept])
-                    st.success("Saved ✅")
-                    st.rerun()
-
-        with ecol2:
-            emp_rows4 = run("SELECT emp_name FROM employees ORDER BY emp_name", fetch=True) or []
-            emp_list4 = [r[0] for r in emp_rows4] if emp_rows4 else []
-            del_emp = st.selectbox("Delete Employee", ["-- Select --"] + emp_list4)
-            if st.button("Delete Employee"):
-                if del_emp != "-- Select --":
-                    run("DELETE FROM employees WHERE emp_name=%s", [del_emp])
-                    st.warning("Deleted ✅")
-                    st.rerun()
-
-        # Show employee master table
-        show_emp = run("SELECT emp_name, dept_name FROM employees ORDER BY dept_name, emp_name", fetch=True) or []
-        if show_emp:
-            st.dataframe(pd.DataFrame(show_emp, columns=["Employee","Department"]), use_container_width=True, hide_index=True)
-
-    # ---- Permissions & Password ----
-    with tab5:
         st.markdown("### ✅ Permissions")
         cur_imp = get_setting("allow_import","1") == "1"
         cur_ed = get_setting("allow_edit_delete","1") == "1"
@@ -692,8 +550,7 @@ if menu == "Control Panel":
         if st.button("Save Permissions"):
             set_setting("allow_import", "1" if ni else "0")
             set_setting("allow_edit_delete", "1" if ne else "0")
-            st.success("Saved ✅")
-            st.rerun()
+            st.success("Saved ✅"); st.rerun()
 
         st.markdown("<div class='hline'></div>", unsafe_allow_html=True)
         st.markdown("### 🔐 Change Admin Password")
