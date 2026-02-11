@@ -15,14 +15,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- DB ----------------
+# ---------------- DB (NEON POSTGRES) ----------------
 @st.cache_resource
 def get_conn():
+    # Streamlit Cloud secrets: NEON_DATABASE_URL = "postgresql://..."
     return psycopg2.connect(st.secrets["NEON_DATABASE_URL"])
 
 conn = get_conn()
 cursor = conn.cursor()
 
+# Create table (Postgres compatible)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS kpi_entries (
     id SERIAL PRIMARY KEY,
@@ -38,6 +40,7 @@ CREATE TABLE IF NOT EXISTS kpi_entries (
 )
 """)
 conn.commit()
+
 # ---------------- HEADER ----------------
 st.title("📊 Yash Gallery – KPI System")
 st.caption("Simple KPI software – Phase 1")
@@ -75,16 +78,17 @@ if submitted:
     else:
         total = int(kpi1 + kpi2 + kpi3 + kpi4)
 
-        if total >= 80:
+        # Rating (total max 400)
+        if total >= 320:
             rating = "Excellent"
-        elif total >= 60:
+        elif total >= 240:
             rating = "Good"
-        elif total >= 40:
+        elif total >= 160:
             rating = "Average"
         else:
             rating = "Needs Improvement"
 
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = datetime.now()
 
         cursor.execute("""
             INSERT INTO kpi_entries
@@ -100,14 +104,16 @@ st.divider()
 # ---------------- FILTERS (SIDEBAR) ----------------
 st.sidebar.header("🔎 Filters")
 
-dept_rows = cursor.execute("""
+# Department list
+cursor.execute("""
 SELECT DISTINCT department
 FROM kpi_entries
 WHERE department IS NOT NULL AND department <> ''
 ORDER BY department
-""").fetchall()
-
+""")
+dept_rows = cursor.fetchall()
 dept_list = [r[0] for r in dept_rows] if dept_rows else []
+
 dept_filter = st.sidebar.selectbox("Department", ["All"] + dept_list)
 
 date_range = st.sidebar.date_input("Date Range (optional)", value=[])
@@ -131,9 +137,10 @@ if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     params.append(str(start_date))
     params.append(str(end_date))
 
-base_q += " ORDER BY datetime(created_at) DESC"
+base_q += " ORDER BY created_at DESC"
 
-rows = cursor.execute(base_q, params).fetchall()
+cursor.execute(base_q, params)
+rows = cursor.fetchall()
 
 # ---------------- SUMMARY ----------------
 st.subheader("Summary")
