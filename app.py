@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
 
 # ==================================================
 # PAGE
@@ -11,23 +12,51 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="Yash Gallery – KPI System", page_icon="📊", layout="wide")
 
 # ==================================================
-# CONFIG: Choose DB
-# - If DATABASE_URL exists in Streamlit secrets/environment => Postgres (Permanent)
-# - Else => SQLite local file (Good for local PC)
+# DB URL BUILDER (No need 1-line DATABASE_URL)
 # ==================================================
+def build_db_url_from_secrets() -> str | None:
+    """
+    Secrets me agar DB_USER, DB_PASSWORD, DB_HOST, DB_NAME mil jaye
+    to yahin se postgresql url ban jayega.
+    """
+    try:
+        user = st.secrets.get("DB_USER", "").strip()
+        pwd = st.secrets.get("DB_PASSWORD", "").strip()
+        host = st.secrets.get("DB_HOST", "").strip()
+        dbn = st.secrets.get("DB_NAME", "").strip()
+        params = st.secrets.get("DB_PARAMS", "").strip()
+    except Exception:
+        return None
+
+    if not (user and pwd and host and dbn):
+        return None
+
+    # password URL safe
+    pwd_enc = quote_plus(pwd)
+
+    url = f"postgresql://{user}:{pwd_enc}@{host}/{dbn}"
+    if params:
+        url += f"?{params}"
+    return url
+
 def get_database_url() -> str:
-    # 1) Streamlit secrets
+    # 1) Build from short secrets (recommended)
+    url = build_db_url_from_secrets()
+    if url:
+        return url
+
+    # 2) If user still wants DATABASE_URL style (optional)
     try:
         if "DATABASE_URL" in st.secrets:
-            return st.secrets["DATABASE_URL"]
+            return str(st.secrets["DATABASE_URL"]).strip()
     except Exception:
         pass
-    # 2) Environment variable
+
     env_url = os.getenv("DATABASE_URL", "").strip()
     if env_url:
         return env_url
 
-    # 3) Fallback SQLite file
+    # 3) Fallback SQLite (local use)
     os.makedirs("data", exist_ok=True)
     sqlite_path = os.path.abspath(os.path.join("data", "kpi_data.db"))
     return f"sqlite:///{sqlite_path}"
@@ -35,10 +64,12 @@ def get_database_url() -> str:
 @st.cache_resource
 def get_engine():
     db_url = get_database_url()
-    # For Supabase/Neon Postgres sometimes needs sslmode=require
+
+    # Neon/PG needs sslmode=require usually; if missing, add
     if db_url.startswith("postgres") and "sslmode=" not in db_url:
         joiner = "&" if "?" in db_url else "?"
         db_url = db_url + f"{joiner}sslmode=require"
+
     return create_engine(db_url, pool_pre_ping=True, future=True)
 
 engine = get_engine()
@@ -133,7 +164,6 @@ div[data-baseweb="datepicker"] > div { border-radius: 16px !important; }
   box-shadow: 0 14px 40px rgba(15,23,42,0.08);
 }
 .small-note{ color: rgba(30,41,59,0.65); font-size: 12px; }
-
 footer {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
@@ -143,10 +173,9 @@ footer {visibility:hidden;}
 # ==================================================
 def init_db():
     with engine.begin() as conn:
-        # employees table
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS employees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             employee_name TEXT UNIQUE,
             department TEXT,
             is_active INTEGER DEFAULT 1,
@@ -154,10 +183,9 @@ def init_db():
         )
         """))
 
-        # kpi_entries table
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS kpi_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             employee_name TEXT,
             department TEXT,
             kpi1 INTEGER,
@@ -170,13 +198,11 @@ def init_db():
         )
         """))
 
-        # indexes (safe)
         try:
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_dept ON kpi_entries(department)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_created ON kpi_entries(created_at)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_emp ON kpi_entries(employee_name)"))
         except Exception:
-            # Some DBs handle IF NOT EXISTS differently; ignore
             pass
 
 init_db()
@@ -242,7 +268,6 @@ def load_kpis(dept_filter: str, date_range, name_search: str) -> pd.DataFrame:
         where += " AND department = :dept"
         params["dept"] = dept_filter
 
-    # date filter
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
         start_date, end_date = date_range
         if is_postgres():
@@ -284,7 +309,6 @@ def delete_kpi_row(row_id: int):
 # ==================================================
 st.markdown('<div class="glass glassHeader">', unsafe_allow_html=True)
 st.markdown('<div class="title">📊 <span>Yash Gallery – KPI System</span></div>', unsafe_allow_html=True)
-
 db_mode = "✅ Permanent DB (Postgres)" if is_postgres() else "⚠️ Local SQLite (Cloud restart may reset)"
 st.markdown(f'<div class="sub">Premium Glass UI • Employee Master • Edit/Delete • {db_mode}</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
@@ -295,7 +319,6 @@ st.write("")
 # ==================================================
 with st.sidebar:
     st.markdown('<div class="drawerCard">', unsafe_allow_html=True)
-
     st.markdown("""
       <div class="whiteStrip">
         <div class="stripTitle">🔎 Filters</div>
@@ -346,13 +369,6 @@ with st.sidebar:
                 deactivate_employee(emp_name)
                 st.success("Deactivated ✅")
                 st.rerun()
-        else:
-            st.info("No active employees.")
-
-    st.write("")
-    st.markdown('<div class="small-note">', unsafe_allow_html=True)
-    st.write("Tip: 100% permanent saving ke liye Streamlit secrets me DATABASE_URL set karo.")
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -361,9 +377,7 @@ with st.sidebar:
 # ==================================================
 tab1, tab2, tab3 = st.tabs(["📝 Entry", "📈 Dashboard", "📋 Records (Edit/Delete)"])
 
-# ==================================================
 # TAB 1 – ENTRY
-# ==================================================
 with tab1:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
     st.markdown("""
@@ -385,14 +399,10 @@ with tab1:
             department = st.text_input("Department (auto)", value=emp_dept.get(employee_name, ""), disabled=True)
 
         k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            v1 = st.number_input("KPI 1 (1–100)", 1, 100, 1, 1)
-        with k2:
-            v2 = st.number_input("KPI 2 (1–100)", 1, 100, 1, 1)
-        with k3:
-            v3 = st.number_input("KPI 3 (1–100)", 1, 100, 1, 1)
-        with k4:
-            v4 = st.number_input("KPI 4 (1–100)", 1, 100, 1, 1)
+        v1 = k1.number_input("KPI 1 (1–100)", 1, 100, 1, 1)
+        v2 = k2.number_input("KPI 2 (1–100)", 1, 100, 1, 1)
+        v3 = k3.number_input("KPI 3 (1–100)", 1, 100, 1, 1)
+        v4 = k4.number_input("KPI 4 (1–100)", 1, 100, 1, 1)
 
         submitted = st.form_submit_button("✅ Calculate & Save")
 
@@ -401,19 +411,14 @@ with tab1:
             st.error("Please select employee.")
         else:
             total, rating = insert_kpi(employee_name, emp_dept.get(employee_name, ""), int(v1), int(v2), int(v3), int(v4))
-            st.toast("Saved ✅", icon="✅")
             st.success(f"Saved ✅ | Total: {total} | Rating: {rating}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ==================================================
-# LOAD KPI DATA
-# ==================================================
+# Load KPI data
 df = load_kpis(dept_filter, date_range, name_search)
 
-# ==================================================
 # TAB 2 – DASHBOARD
-# ==================================================
 with tab2:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
     st.markdown("""
@@ -439,7 +444,6 @@ with tab2:
                 st.markdown('</div>', unsafe_allow_html=True)
 
         left, right = st.columns([1.2, 1])
-
         with left:
             by_dept = df.groupby("department", as_index=False)["total_score"].mean().sort_values("total_score", ascending=False)
             fig1 = px.bar(by_dept, x="department", y="total_score")
@@ -455,9 +459,7 @@ with tab2:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ==================================================
 # TAB 3 – RECORDS (Edit/Delete)
-# ==================================================
 with tab3:
     st.markdown('<div class="glass" style="padding:18px;">', unsafe_allow_html=True)
     st.markdown("""
