@@ -3,42 +3,27 @@ import psycopg2
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from streamlit_option_menu import option_menu
 
 # ---------------- PAGE ----------------
-st.set_page_config(page_title="Yash Gallery – KPI Dashboard", layout="wide")
+st.set_page_config(page_title="Yash Gallery – KPI System", layout="wide")
 
-# ---------------- CLEAN LIGHT UI ----------------
+# ---------------- UI CSS (clean product style) ----------------
 st.markdown("""
 <style>
-.stApp { background: #f6f7fb; }
-html, body, [class*="css"] { color: #0f172a !important; }
-.block-container { padding-top: 1.2rem; }
-[data-testid="stSidebar"] { width: 300px; }
-[data-testid="stSidebar"] > div:first-child { width: 300px; }
-
+.block-container{padding-top:1rem}
 .card{
-  background:white;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  padding:14px 16px;
-  box-shadow:0 6px 18px rgba(15,23,42,0.06);
+  background:#fff;border:1px solid #e5e7eb;border-radius:16px;
+  padding:14px 16px; box-shadow:0 6px 18px rgba(15,23,42,0.06);
 }
-.small{ color:#64748b; font-size:12px; }
-
-.topbar{
-  background:white;
-  border:1px solid #e5e7eb;
-  border-radius:14px;
-  padding:10px 12px;
-  box-shadow:0 6px 18px rgba(15,23,42,0.06);
-  margin-top:10px;
-  margin-bottom:14px;
-}
-.stButton > button, .stDownloadButton > button { border-radius: 12px !important; }
+.small{color:#64748b;font-size:12px}
+.hline{height:1px;background:#e5e7eb;margin:10px 0}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;
+  border:1px solid #e5e7eb;background:#f8fafc;font-size:12px;color:#334155}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- DB (NEON - AUTO RECONNECT) ----------------
+# ---------------- DB (Neon + auto reconnect) ----------------
 def get_conn():
     url = st.secrets["NEON_DATABASE_URL"]
     conn = st.session_state.get("db_conn")
@@ -63,9 +48,7 @@ def run(query, params=None, fetch=False, many=False, data=None):
                 cur.executemany(query, data)
                 return None
             cur.execute(query, params or [])
-            if fetch:
-                return cur.fetchall()
-            return None
+            return cur.fetchall() if fetch else None
     except psycopg2.InterfaceError:
         st.session_state["db_conn"] = None
         conn = get_conn()
@@ -74,371 +57,364 @@ def run(query, params=None, fetch=False, many=False, data=None):
                 cur.executemany(query, data)
                 return None
             cur.execute(query, params or [])
-            if fetch:
-                return cur.fetchall()
-            return None
+            return cur.fetchall() if fetch else None
 
-# Create table
+# ---------------- Tables ----------------
 run("""
 CREATE TABLE IF NOT EXISTS kpi_entries (
     id SERIAL PRIMARY KEY,
     employee_name TEXT NOT NULL,
     department TEXT NOT NULL,
-    kpi1 INTEGER,
-    kpi2 INTEGER,
-    kpi3 INTEGER,
-    kpi4 INTEGER,
-    total_score INTEGER,
-    rating TEXT,
+    kpi1 INTEGER, kpi2 INTEGER, kpi3 INTEGER, kpi4 INTEGER,
+    total_score INTEGER, rating TEXT,
     created_at TIMESTAMP
 )
 """)
 
-# ---------------- HELPERS ----------------
+# KPI master (dynamic KPI labels)
+run("""
+CREATE TABLE IF NOT EXISTS kpi_master (
+    id SERIAL PRIMARY KEY,
+    kpi_key TEXT UNIQUE NOT NULL,
+    kpi_label TEXT NOT NULL
+)
+""")
+
+# Ensure default KPI labels exist
+defaults = [("kpi1", "KPI 1"), ("kpi2", "KPI 2"), ("kpi3", "KPI 3"), ("kpi4", "KPI 4")]
+for k, lbl in defaults:
+    run("""
+    INSERT INTO kpi_master (kpi_key, kpi_label)
+    VALUES (%s,%s)
+    ON CONFLICT (kpi_key) DO NOTHING
+    """, [k, lbl])
+
+def get_kpi_labels():
+    rows = run("SELECT kpi_key, kpi_label FROM kpi_master ORDER BY kpi_key", fetch=True) or []
+    d = {k: v for k, v in rows}
+    return d.get("kpi1","KPI 1"), d.get("kpi2","KPI 2"), d.get("kpi3","KPI 3"), d.get("kpi4","KPI 4")
+
 def calc_rating(total: int) -> str:
+    # max 400
     if total >= 320: return "Excellent"
     if total >= 240: return "Good"
     if total >= 160: return "Average"
     return "Needs Improvement"
 
-def to_df(rows):
-    return pd.DataFrame(rows, columns=[
-        "ID", "Employee", "Department", "KPI1", "KPI2", "KPI3", "KPI4",
-        "Total Score", "Rating", "Created At"
-    ])
+# ---------------- Sidebar (filters + admin) ----------------
+st.sidebar.markdown("## 🔎 Filters")
+dept_rows = run("SELECT DISTINCT department FROM kpi_entries ORDER BY department", fetch=True) or []
+dept_list = [r[0] for r in dept_rows if r[0]]
+dept_filter = st.sidebar.selectbox("Department", ["All"] + dept_list)
 
-# ---------------- HEADER ----------------
+emp_q = "SELECT DISTINCT employee_name FROM kpi_entries WHERE 1=1"
+emp_p = []
+if dept_filter != "All":
+    emp_q += " AND department=%s"
+    emp_p.append(dept_filter)
+emp_q += " ORDER BY employee_name"
+emp_rows = run(emp_q, emp_p, fetch=True) or []
+emp_list = [r[0] for r in emp_rows if r[0]]
+emp_filter = st.sidebar.selectbox("Employee", ["All"] + emp_list)
+
+date_range = st.sidebar.date_input("Date Range (optional)", value=[])
+search_text = st.sidebar.text_input("Search name", placeholder="e.g., Irfan")
+
+st.sidebar.markdown("## 🔐 Admin")
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
+pw = st.sidebar.text_input("Admin Password", type="password", placeholder="Enter password")
+if st.sidebar.button("Login"):
+    st.session_state["is_admin"] = (pw == st.secrets.get("ADMIN_PASSWORD",""))
+    st.sidebar.success("Admin mode ON" if st.session_state["is_admin"] else "Wrong password")
+
+is_admin = st.session_state["is_admin"]
+
+# ---------------- Top Header + Navigation ----------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 c1, c2 = st.columns([3, 2])
 with c1:
-    st.title("📊 Yash Gallery – KPI Dashboard")
-    st.caption("Neon DB • Filters • Reports • Import/Export • Edit/Delete")
+    st.title("📊 Yash Gallery – KPI System")
+    st.caption("Professional • Dynamic KPI Labels • Dashboard • Reports • Protected Admin Actions")
 with c2:
-    st.markdown("**Quick Tips**")
-    st.markdown("<div class='small'>1) Sidebar filters use karo<br>2) Records select karke Edit/Delete<br>3) Export filtered CSV</div>", unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(f"<span class='badge'>Database: Neon</span> &nbsp; <span class='badge'>Admin: {'ON' if is_admin else 'OFF'}</span>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------- TOP SLIDER BAR ----------------
-with st.container():
-    st.markdown('<div class="topbar">', unsafe_allow_html=True)
-    try:
-        page = st.segmented_control("", ["Dashboard", "Reports"], default="Dashboard")
-    except Exception:
-        page = st.radio("", ["Dashboard", "Reports"], horizontal=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+menu = option_menu(
+    None,
+    ["Dashboard", "Entry", "Records", "Reports", "Settings"],
+    icons=["speedometer2", "plus-circle", "table", "bar-chart", "gear"],
+    orientation="horizontal",
+    styles={
+        "container": {"padding": "0.2rem 0", "background-color": "#ffffff", "border": "1px solid #e5e7eb", "border-radius": "14px"},
+        "nav-link": {"font-size": "15px", "margin": "0px", "padding": "10px 14px"},
+        "nav-link-selected": {"background-color": "#2563EB", "color": "white"},
+    },
+)
 
-# ---------------- SIDEBAR FILTERS ----------------
-st.sidebar.header("🔎 Filters")
-
-dept_rows = run("""
-SELECT DISTINCT department
-FROM kpi_entries
-WHERE department IS NOT NULL AND department <> ''
-ORDER BY department
-""", fetch=True) or []
-dept_list = [r[0] for r in dept_rows]
-dept_filter = st.sidebar.selectbox("Department", ["All"] + dept_list)
-
-emp_q = """
-SELECT DISTINCT employee_name
-FROM kpi_entries
-WHERE employee_name IS NOT NULL AND employee_name <> ''
-"""
-emp_params = []
-if dept_filter != "All":
-    emp_q += " AND department = %s"
-    emp_params.append(dept_filter)
-emp_q += " ORDER BY employee_name"
-emp_rows = run(emp_q, emp_params, fetch=True) or []
-emp_list = [r[0] for r in emp_rows]
-emp_filter = st.sidebar.selectbox("Employee", ["All"] + emp_list)
-
-search_text = st.sidebar.text_input("Search name contains", placeholder="e.g., Irfan")
-date_range = st.sidebar.date_input("Date Range (optional)", value=[])
-st.sidebar.markdown("<div class='small'>Tip: Date range me 2 dates select karo (start & end).</div>", unsafe_allow_html=True)
-
-# ---------------- FETCH FILTERED DATA ----------------
+# ---------------- Data Fetch (filtered) ----------------
 q = """
 SELECT id, employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at
-FROM kpi_entries
-WHERE 1=1
+FROM kpi_entries WHERE 1=1
 """
 p = []
 if dept_filter != "All":
-    q += " AND department = %s"; p.append(dept_filter)
+    q += " AND department=%s"; p.append(dept_filter)
 if emp_filter != "All":
-    q += " AND employee_name = %s"; p.append(emp_filter)
+    q += " AND employee_name=%s"; p.append(emp_filter)
 if search_text.strip():
     q += " AND employee_name ILIKE %s"; p.append(f"%{search_text.strip()}%")
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     s, e = date_range
-    q += " AND DATE(created_at) BETWEEN %s AND %s"
-    p.append(str(s)); p.append(str(e))
+    q += " AND DATE(created_at) BETWEEN %s AND %s"; p += [str(s), str(e)]
 q += " ORDER BY created_at DESC"
 
 rows = run(q, p, fetch=True) or []
-df = to_df(rows)
+df = pd.DataFrame(rows, columns=["ID","Employee","Department","KPI1","KPI2","KPI3","KPI4","Total Score","Rating","Created At"])
+
+kpi1_lbl, kpi2_lbl, kpi3_lbl, kpi4_lbl = get_kpi_labels()
 
 # ============================================================
-#                         DASHBOARD
+# Dashboard
 # ============================================================
-if page == "Dashboard":
-    left, right = st.columns([2, 1], gap="large")
-
-    # ---------- ADD ENTRY ----------
-    with left:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("➕ Add KPI Entry")
-
-        with st.form("add_form", clear_on_submit=True):
-            a1, a2 = st.columns([2, 1])
-            with a1:
-                employee_name = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
-            with a2:
-                department = st.selectbox(
-                    "Department",
-                    ["Fabric", "Merchant", "Sampling", "Cutting", "Finishing", "Dispatch", "Admin", "Sales", "Accounts"]
-                )
-
-            k1, k2, k3, k4 = st.columns(4)
-            with k1: v1 = st.number_input("KPI 1", 1, 100, 1, 1)
-            with k2: v2 = st.number_input("KPI 2", 1, 100, 1, 1)
-            with k3: v3 = st.number_input("KPI 3", 1, 100, 1, 1)
-            with k4: v4 = st.number_input("KPI 4", 1, 100, 1, 1)
-
-            submitted = st.form_submit_button("✅ Save Entry")
-
-        if submitted:
-            emp = (employee_name or "").strip()
-            if emp == "":
-                st.error("Employee Name required.")
-            else:
-                total = int(v1 + v2 + v3 + v4)
-                rating = calc_rating(total)
-                created_at = datetime.now()
-                run("""
-                    INSERT INTO kpi_entries
-                    (employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, [emp, department, int(v1), int(v2), int(v3), int(v4), total, rating, created_at])
-                st.success(f"Saved ✅ | Total: {total} | Rating: {rating}")
-                st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------- EXPORT / IMPORT ----------
-    with right:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("📥 Export / 📤 Import")
-        st.markdown("<div class='small'>Export filtered CSV or import KPI CSV.</div>", unsafe_allow_html=True)
-
-        csv_data = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download CSV (Filtered)", csv_data, "kpi_export.csv", "text/csv")
-
-        st.write("")
-        uploaded = st.file_uploader("Import KPI CSV", type=["csv"])
-        if st.button("📤 Import Now"):
-            if uploaded is None:
-                st.warning("Please upload CSV first.")
-            else:
-                try:
-                    imp = pd.read_csv(uploaded)
-                    required = ["Employee", "Department", "KPI1", "KPI2", "KPI3", "KPI4"]
-                    missing = [c for c in required if c not in imp.columns]
-                    if missing:
-                        st.error(f"CSV missing columns: {', '.join(missing)}")
-                    else:
-                        imp["Employee"] = imp["Employee"].astype(str).str.strip()
-                        imp["Department"] = imp["Department"].astype(str).str.strip()
-                        for col in ["KPI1", "KPI2", "KPI3", "KPI4"]:
-                            imp[col] = pd.to_numeric(imp[col], errors="coerce").fillna(0).astype(int)
-
-                        imp["Total Score"] = imp["KPI1"] + imp["KPI2"] + imp["KPI3"] + imp["KPI4"]
-                        if "Rating" not in imp.columns:
-                            imp["Rating"] = imp["Total Score"].apply(calc_rating)
-
-                        if "Created At" in imp.columns:
-                            imp["Created At"] = pd.to_datetime(imp["Created At"], errors="coerce")
-                        else:
-                            imp["Created At"] = pd.Timestamp.now()
-
-                        data_to_insert = []
-                        for _, r in imp.iterrows():
-                            created = r["Created At"]
-                            created = datetime.now() if pd.isna(created) else created.to_pydatetime()
-                            data_to_insert.append((
-                                r["Employee"], r["Department"],
-                                int(r["KPI1"]), int(r["KPI2"]), int(r["KPI3"]), int(r["KPI4"]),
-                                int(r["Total Score"]), str(r["Rating"]), created
-                            ))
-
-                        run("""
-                            INSERT INTO kpi_entries
-                            (employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        """, many=True, data=data_to_insert)
-
-                        st.success(f"✅ Imported {len(data_to_insert)} rows")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Import failed: {e}")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------- SUMMARY ----------
-    st.write("")
+if menu == "Dashboard":
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("📌 Dashboard Summary")
-
+    st.subheader("📌 Summary")
     m1, m2, m3, m4 = st.columns(4)
-    if len(df) > 0:
-        m1.metric("Total Records", int(len(df)))
+    if len(df):
+        m1.metric("Total Records", len(df))
         m2.metric("Average Score", round(float(df["Total Score"].mean()), 2))
         m3.metric("Best Score", int(df["Total Score"].max()))
         m4.metric("Worst Score", int(df["Total Score"].min()))
     else:
         m1.metric("Total Records", 0); m2.metric("Average Score", 0); m3.metric("Best Score", 0); m4.metric("Worst Score", 0)
-
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------- CHARTS ----------
-    st.write("")
-    cA, cB, cC = st.columns([1.2, 1, 1], gap="large")
-
+    cA, cB = st.columns([1.2, 1], gap="large")
     with cA:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("📊 Score Distribution")
-        if len(df) > 0:
+        if len(df):
             st.plotly_chart(px.histogram(df, x="Total Score", nbins=20), use_container_width=True)
         else:
-            st.info("No data to show.")
+            st.info("No data with current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with cB:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("🏭 Dept Average")
-        if len(df) > 0:
+        if len(df):
             dept_avg = df.groupby("Department", as_index=False)["Total Score"].mean().sort_values("Total Score", ascending=False)
             st.plotly_chart(px.bar(dept_avg, x="Department", y="Total Score"), use_container_width=True)
         else:
-            st.info("No data to show.")
+            st.info("No data with current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with cC:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("📅 Daily Trend")
-        if len(df) > 0:
-            tmp = df.copy()
-            tmp["Day"] = pd.to_datetime(tmp["Created At"]).dt.date
-            trend = tmp.groupby("Day", as_index=False)["Total Score"].mean().sort_values("Day")
-            st.plotly_chart(px.line(trend, x="Day", y="Total Score", markers=True), use_container_width=True)
+# ============================================================
+# Entry
+# ============================================================
+if menu == "Entry":
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("➕ Add KPI Entry")
+
+    with st.form("add_form", clear_on_submit=True):
+        a1, a2 = st.columns([2, 1])
+        with a1:
+            employee_name = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
+        with a2:
+            department = st.selectbox("Department", ["Fabric","Merchant","Sampling","Cutting","Finishing","Dispatch","Admin","Sales","Accounts"])
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: v1 = st.number_input(kpi1_lbl, 1, 100, 1, 1)
+        with k2: v2 = st.number_input(kpi2_lbl, 1, 100, 1, 1)
+        with k3: v3 = st.number_input(kpi3_lbl, 1, 100, 1, 1)
+        with k4: v4 = st.number_input(kpi4_lbl, 1, 100, 1, 1)
+
+        ok = st.form_submit_button("✅ Save Entry")
+
+    if ok:
+        emp = (employee_name or "").strip()
+        if emp == "":
+            st.error("Employee Name required.")
         else:
-            st.info("No data to show.")
+            total = int(v1+v2+v3+v4)
+            rating = calc_rating(total)
+            run("""
+                INSERT INTO kpi_entries (employee_name, department, kpi1,kpi2,kpi3,kpi4,total_score,rating,created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, [emp, department, int(v1), int(v2), int(v3), int(v4), total, rating, datetime.now()])
+            st.success(f"Saved ✅ | Total: {total} | Rating: {rating}")
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ============================================================
+# Records (Export/Import + Edit/Delete protected)
+# ============================================================
+if menu == "Records":
+    left, right = st.columns([2, 1], gap="large")
+
+    with left:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("📋 Records Table")
+        st.dataframe(df.drop(columns=["ID"]) if len(df) else df, use_container_width=True, hide_index=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------- RECORDS + EDIT/DELETE ----------
+    with right:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("⬇️ Export / ⬆️ Import")
+
+        csv_data = df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download CSV (Filtered)", csv_data, "kpi_export.csv", "text/csv")
+
+        up = st.file_uploader("Import CSV", type=["csv"])
+        if st.button("Import Now", disabled=not is_admin):
+            if not is_admin:
+                st.warning("Admin login required for Import.")
+            elif up is None:
+                st.warning("Upload CSV first.")
+            else:
+                imp = pd.read_csv(up)
+                required = ["Employee","Department","KPI1","KPI2","KPI3","KPI4"]
+                miss = [c for c in required if c not in imp.columns]
+                if miss:
+                    st.error(f"Missing columns: {', '.join(miss)}")
+                else:
+                    imp["Employee"] = imp["Employee"].astype(str).str.strip()
+                    imp["Department"] = imp["Department"].astype(str).str.strip()
+                    for c in ["KPI1","KPI2","KPI3","KPI4"]:
+                        imp[c] = pd.to_numeric(imp[c], errors="coerce").fillna(0).astype(int)
+                    imp["Total Score"] = imp["KPI1"]+imp["KPI2"]+imp["KPI3"]+imp["KPI4"]
+                    imp["Rating"] = imp["Total Score"].apply(calc_rating)
+                    imp["Created At"] = pd.to_datetime(imp.get("Created At", pd.Timestamp.now()), errors="coerce").fillna(pd.Timestamp.now())
+
+                    data = []
+                    for _, r in imp.iterrows():
+                        data.append((r["Employee"], r["Department"], int(r["KPI1"]), int(r["KPI2"]), int(r["KPI3"]), int(r["KPI4"]),
+                                     int(r["Total Score"]), str(r["Rating"]), r["Created At"].to_pydatetime()))
+                    run("""
+                        INSERT INTO kpi_entries (employee_name, department, kpi1,kpi2,kpi3,kpi4,total_score,rating,created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """, many=True, data=data)
+                    st.success(f"Imported {len(data)} rows ✅")
+                    st.rerun()
+
+        st.markdown("<div class='small'>Import/Edit/Delete only Admin ke liye enable hai.</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Edit/Delete
     st.write("")
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🗂 Records (Edit / Delete)")
+    st.subheader("✏️ Edit / 🗑 Delete (Admin Only)")
 
     if len(df) == 0:
-        st.info("No records found with current filters.")
+        st.info("No records for current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
 
-    selected_id = st.selectbox("Select Record ID", df["ID"].tolist())
-    row = df[df["ID"] == selected_id].iloc[0]
+    rec_id = st.selectbox("Select Record ID", df["ID"].tolist())
+    row = df[df["ID"] == rec_id].iloc[0]
 
-    e1, e2, e3 = st.columns([1.1, 1.1, 1], gap="large")
-
+    e1, e2, e3 = st.columns([1.2,1.4,1], gap="large")
     with e1:
-        st.markdown("### ✏️ Edit Record")
-        edit_emp = st.text_input("Employee", value=str(row["Employee"]))
-        edit_dept = st.text_input("Department", value=str(row["Department"]))
-
+        emp = st.text_input("Employee", value=str(row["Employee"]))
+        dept = st.text_input("Department", value=str(row["Department"]))
     with e2:
-        k1, k2 = st.columns(2)
-        with k1:
-            edit_kpi1 = st.number_input("KPI1", 1, 100, int(row["KPI1"]), 1, key="ek1")
-            edit_kpi2 = st.number_input("KPI2", 1, 100, int(row["KPI2"]), 1, key="ek2")
-        with k2:
-            edit_kpi3 = st.number_input("KPI3", 1, 100, int(row["KPI3"]), 1, key="ek3")
-            edit_kpi4 = st.number_input("KPI4", 1, 100, int(row["KPI4"]), 1, key="ek4")
-
+        c1,c2 = st.columns(2)
+        with c1:
+            k1 = st.number_input(kpi1_lbl, 1,100,int(row["KPI1"]),1, key="rk1")
+            k2 = st.number_input(kpi2_lbl, 1,100,int(row["KPI2"]),1, key="rk2")
+        with c2:
+            k3 = st.number_input(kpi3_lbl, 1,100,int(row["KPI3"]),1, key="rk3")
+            k4 = st.number_input(kpi4_lbl, 1,100,int(row["KPI4"]),1, key="rk4")
     with e3:
-        st.markdown("### 🧾 Actions")
-        new_total = int(edit_kpi1 + edit_kpi2 + edit_kpi3 + edit_kpi4)
+        new_total = int(k1+k2+k3+k4)
         new_rating = calc_rating(new_total)
-        st.write(f"**New Total:** {new_total}")
-        st.write(f"**New Rating:** {new_rating}")
+        st.markdown(f"**Total:** {new_total}")
+        st.markdown(f"**Rating:** {new_rating}")
 
-        colu, cold = st.columns(2)
-        with colu:
-            if st.button("💾 Update", use_container_width=True):
-                empx = (edit_emp or "").strip()
-                deptx = (edit_dept or "").strip()
-                if empx == "" or deptx == "":
-                    st.error("Employee & Department required.")
-                else:
-                    run("""
-                        UPDATE kpi_entries
-                        SET employee_name=%s, department=%s,
-                            kpi1=%s, kpi2=%s, kpi3=%s, kpi4=%s,
-                            total_score=%s, rating=%s
-                        WHERE id=%s
-                    """, [empx, deptx, int(edit_kpi1), int(edit_kpi2), int(edit_kpi3), int(edit_kpi4),
-                          new_total, new_rating, int(selected_id)])
-                    st.success("✅ Updated")
-                    st.rerun()
+        if st.button("Update", disabled=not is_admin):
+            if not is_admin:
+                st.warning("Admin login required.")
+            else:
+                run("""
+                    UPDATE kpi_entries SET employee_name=%s, department=%s,
+                      kpi1=%s,kpi2=%s,kpi3=%s,kpi4=%s,total_score=%s,rating=%s
+                    WHERE id=%s
+                """, [emp.strip(), dept.strip(), int(k1),int(k2),int(k3),int(k4), new_total, new_rating, int(rec_id)])
+                st.success("Updated ✅"); st.rerun()
 
-        with cold:
-            if st.button("🗑 Delete", use_container_width=True):
-                run("DELETE FROM kpi_entries WHERE id=%s", [int(selected_id)])
-                st.warning("🗑 Deleted")
-                st.rerun()
+        if st.button("Delete", disabled=not is_admin):
+            if not is_admin:
+                st.warning("Admin login required.")
+            else:
+                run("DELETE FROM kpi_entries WHERE id=%s", [int(rec_id)])
+                st.warning("Deleted 🗑"); st.rerun()
 
-    st.markdown("----")
-    st.subheader("📋 Filtered Records Table")
-    st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
-#                          REPORTS
+# Reports
 # ============================================================
-if page == "Reports":
+if menu == "Reports":
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("📄 Reports")
+    st.subheader("📄 Monthly Reports")
 
     if len(df) == 0:
-        st.info("No data for current filters. Filters change karke dekho.")
+        st.info("No data for current filters.")
         st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
 
     tmp = df.copy()
     tmp["Month"] = pd.to_datetime(tmp["Created At"]).dt.to_period("M").astype(str)
+    months = sorted(tmp["Month"].unique())[::-1]
 
-    r1, r2, r3 = st.columns([1, 1, 1.2])
+    r1, r2 = st.columns([1,1])
     with r1:
-        rep_type = st.selectbox("Report Type", ["Employee Wise (Monthly Avg)", "Department Wise (Monthly Avg)"])
+        report_type = st.selectbox("Report Type", ["Employee Wise Avg", "Department Wise Avg"])
     with r2:
-        month_list = sorted(tmp["Month"].unique())
-        sel_month = st.selectbox("Select Month", month_list[::-1])
-    with r3:
-        st.markdown("<div class='small'>Report is based on current sidebar filters + selected month.</div>", unsafe_allow_html=True)
+        sel_month = st.selectbox("Month", months)
 
     mdf = tmp[tmp["Month"] == sel_month]
-
-    if rep_type.startswith("Employee"):
-        report = mdf.groupby("Employee", as_index=False)["Total Score"].mean().sort_values("Total Score", ascending=False)
-        fig = px.bar(report, x="Employee", y="Total Score")
+    if report_type.startswith("Employee"):
+        rep = mdf.groupby("Employee", as_index=False)["Total Score"].mean().sort_values("Total Score", ascending=False)
+        fig = px.bar(rep, x="Employee", y="Total Score")
     else:
-        report = mdf.groupby("Department", as_index=False)["Total Score"].mean().sort_values("Total Score", ascending=False)
-        fig = px.bar(report, x="Department", y="Total Score")
+        rep = mdf.groupby("Department", as_index=False)["Total Score"].mean().sort_values("Total Score", ascending=False)
+        fig = px.bar(rep, x="Department", y="Total Score")
 
     st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(report, use_container_width=True, hide_index=True)
+    st.dataframe(rep, use_container_width=True, hide_index=True)
 
-    rep_csv = report.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Report CSV", rep_csv, f"report_{sel_month.replace('-','_')}.csv", "text/csv")
+    out = rep.to_csv(index=False).encode("utf-8")
+    st.download_button("Download Report CSV", out, f"report_{sel_month}.csv", "text/csv")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+# ============================================================
+# Settings (Dynamic KPI labels)
+# ============================================================
+if menu == "Settings":
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("⚙️ Settings (Dynamic KPI Names)")
+
+    st.info("Yahan se aap KPI1..KPI4 ke naam change kar sakte ho. (Example: Quality, Speed, Attendance, Discipline)")
+
+    if not is_admin:
+        st.warning("Admin login required to change settings.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+
+    k1,k2,k3,k4 = get_kpi_labels()
+    n1 = st.text_input("KPI 1 Label", value=k1)
+    n2 = st.text_input("KPI 2 Label", value=k2)
+    n3 = st.text_input("KPI 3 Label", value=k3)
+    n4 = st.text_input("KPI 4 Label", value=k4)
+
+    if st.button("Save KPI Labels"):
+        run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi1'", [n1.strip() or "KPI 1"])
+        run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi2'", [n2.strip() or "KPI 2"])
+        run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi3'", [n3.strip() or "KPI 3"])
+        run("UPDATE kpi_master SET kpi_label=%s WHERE kpi_key='kpi4'", [n4.strip() or "KPI 4"])
+        st.success("Saved ✅")
+        st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
