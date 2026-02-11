@@ -9,7 +9,6 @@ st.set_page_config(page_title="Yash Gallery – KPI System", layout="wide")
 # ---------------- GLASS UI CSS ----------------
 st.markdown("""
 <style>
-/* App background */
 .stApp {
   background: radial-gradient(1200px 700px at 20% 10%, rgba(99,102,241,.18), transparent 55%),
               radial-gradient(900px 600px at 85% 15%, rgba(16,185,129,.16), transparent 55%),
@@ -17,17 +16,10 @@ st.markdown("""
               linear-gradient(180deg, rgba(15,23,42,.98) 0%, rgba(2,6,23,.98) 100%);
   color: #e5e7eb;
 }
-
-/* Make default text light */
-html, body, [class*="css"]  {
-  color: #e5e7eb !important;
-}
-
-/* Sidebar width */
+html, body, [class*="css"]  { color: #e5e7eb !important; }
 [data-testid="stSidebar"] { width: 290px; }
 [data-testid="stSidebar"] > div:first-child { width: 290px; }
 
-/* Glass cards */
 .glass {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255,255,255,0.10);
@@ -37,12 +29,9 @@ html, body, [class*="css"]  {
   -webkit-backdrop-filter: blur(10px);
   box-shadow: 0 10px 30px rgba(0,0,0,0.25);
 }
-
-/* Headings */
 h1, h2, h3 { color: #f9fafb !important; }
 .small-note { color:#9ca3af; font-size:12px; }
 
-/* Inputs and widgets styling */
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input,
@@ -53,7 +42,6 @@ h1, h2, h3 { color: #f9fafb !important; }
   border-radius: 12px !important;
 }
 
-/* Buttons */
 .stButton > button, .stDownloadButton > button {
   border-radius: 12px !important;
   border: 1px solid rgba(255,255,255,0.16) !important;
@@ -64,7 +52,6 @@ h1, h2, h3 { color: #f9fafb !important; }
   background: rgba(255,255,255,0.12) !important;
 }
 
-/* Dataframe container look */
 [data-testid="stDataFrame"] {
   background: rgba(255,255,255,0.06) !important;
   border: 1px solid rgba(255,255,255,0.10) !important;
@@ -72,20 +59,57 @@ h1, h2, h3 { color: #f9fafb !important; }
   padding: 6px !important;
 }
 
-/* Reduce top padding */
 .block-container { padding-top: 1.2rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- DB (NEON POSTGRES) ----------------
-@st.cache_resource
+# ---------------- DB (NEON - AUTO RECONNECT) ----------------
 def get_conn():
-    return psycopg2.connect(st.secrets["NEON_DATABASE_URL"])
+    """Keep a healthy Postgres connection in session_state (fixes InterfaceError)."""
+    url = st.secrets["NEON_DATABASE_URL"]
 
-conn = get_conn()
-cursor = conn.cursor()
+    conn = st.session_state.get("db_conn")
+    if conn is None or getattr(conn, "closed", 1) != 0:
+        conn = psycopg2.connect(
+            url,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+        conn.autocommit = True
+        st.session_state["db_conn"] = conn
 
-cursor.execute("""
+    return conn
+
+def run(query, params=None, fetch=False, many=False, data=None):
+    """Helper to execute queries safely with fresh cursor each time."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            if many and data is not None:
+                cur.executemany(query, data)
+                return None
+            cur.execute(query, params or [])
+            if fetch:
+                return cur.fetchall()
+            return None
+    except psycopg2.InterfaceError:
+        # Connection got stale; reconnect once and retry
+        st.session_state["db_conn"] = None
+        conn = get_conn()
+        with conn.cursor() as cur:
+            if many and data is not None:
+                cur.executemany(query, data)
+                return None
+            cur.execute(query, params or [])
+            if fetch:
+                return cur.fetchall()
+            return None
+
+# Create table
+run("""
 CREATE TABLE IF NOT EXISTS kpi_entries (
     id SERIAL PRIMARY KEY,
     employee_name TEXT NOT NULL,
@@ -99,31 +123,26 @@ CREATE TABLE IF NOT EXISTS kpi_entries (
     created_at TIMESTAMP
 )
 """)
-conn.commit()
 
 # ---------------- HEADER ----------------
 st.markdown('<div class="glass">', unsafe_allow_html=True)
 st.title("📊 Yash Gallery – KPI System")
 st.caption("Simple KPI software – Phase 1 (Neon DB + Export/Import + Filters)")
 st.markdown('</div>', unsafe_allow_html=True)
-
 st.write("")
 
 # ---------------- SIDEBAR FILTERS ----------------
 st.sidebar.markdown("## 🔎 Filters")
 
-# Department list
-cursor.execute("""
+dept_rows = run("""
 SELECT DISTINCT department
 FROM kpi_entries
 WHERE department IS NOT NULL AND department <> ''
 ORDER BY department
-""")
-dept_rows = cursor.fetchall()
-dept_list = [r[0] for r in dept_rows] if dept_rows else []
+""", fetch=True) or []
+dept_list = [r[0] for r in dept_rows]
 dept_filter = st.sidebar.selectbox("Department", ["All"] + dept_list)
 
-# Employee list (depends on dept filter)
 emp_q = """
 SELECT DISTINCT employee_name
 FROM kpi_entries
@@ -135,9 +154,8 @@ if dept_filter != "All":
     emp_params.append(dept_filter)
 emp_q += " ORDER BY employee_name"
 
-cursor.execute(emp_q, emp_params)
-emp_rows = cursor.fetchall()
-emp_list = [r[0] for r in emp_rows] if emp_rows else []
+emp_rows = run(emp_q, emp_params, fetch=True) or []
+emp_list = [r[0] for r in emp_rows]
 emp_filter = st.sidebar.selectbox("Employee", ["All"] + emp_list)
 
 date_range = st.sidebar.date_input("Date Range (optional)", value=[])
@@ -149,7 +167,6 @@ st.subheader("Employee KPI Entry")
 
 with st.form("kpi_form", clear_on_submit=True):
     c1, c2 = st.columns([2, 1])
-
     with c1:
         employee_name = st.text_input("Employee Name", placeholder="e.g., Irfan Deshwali")
     with c2:
@@ -177,7 +194,6 @@ if submitted:
     else:
         total = int(kpi1 + kpi2 + kpi3 + kpi4)
 
-        # Rating based on total (max 400)
         if total >= 320:
             rating = "Excellent"
         elif total >= 240:
@@ -189,17 +205,15 @@ if submitted:
 
         created_at = datetime.now()
 
-        cursor.execute("""
+        run("""
             INSERT INTO kpi_entries
             (employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (emp, department, int(kpi1), int(kpi2), int(kpi3), int(kpi4), total, rating, created_at))
-        conn.commit()
+        """, [emp, department, int(kpi1), int(kpi2), int(kpi3), int(kpi4), total, rating, created_at])
 
         st.success(f"Saved ✅ | Total: {total} | Rating: {rating}")
 
 st.markdown('</div>', unsafe_allow_html=True)
-
 st.write("")
 
 # ---------------- QUERY (Filtered) ----------------
@@ -226,8 +240,7 @@ if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
 
 base_q += " ORDER BY created_at DESC"
 
-cursor.execute(base_q, params)
-rows = cursor.fetchall()
+rows = run(base_q, params, fetch=True) or []
 
 df = pd.DataFrame(rows, columns=[
     "Employee", "Department", "KPI1", "KPI2", "KPI3", "KPI4",
@@ -238,8 +251,7 @@ df = pd.DataFrame(rows, columns=[
 st.markdown('<div class="glass">', unsafe_allow_html=True)
 st.subheader("Summary")
 
-total_records = len(df)
-if total_records > 0:
+if len(df) > 0:
     avg_score = round(df["Total Score"].mean(), 2)
     best_score = int(df["Total Score"].max())
     worst_score = int(df["Total Score"].min())
@@ -247,20 +259,18 @@ else:
     avg_score = best_score = worst_score = 0
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total Records", total_records)
+m1.metric("Total Records", len(df))
 m2.metric("Average Score", avg_score)
 m3.metric("Best Score", best_score)
 m4.metric("Worst Score", worst_score)
 
 st.markdown('</div>', unsafe_allow_html=True)
-
 st.write("")
 
 # ---------------- EXPORT / IMPORT ----------------
 st.markdown('<div class="glass">', unsafe_allow_html=True)
 st.subheader("Export / Import")
 
-# Export CSV (filtered)
 csv_data = df.to_csv(index=False).encode("utf-8")
 st.download_button(
     "⬇️ Download CSV (Filtered Data)",
@@ -270,8 +280,6 @@ st.download_button(
 )
 
 st.write("")
-
-# Import CSV (bulk insert)
 uploaded = st.file_uploader("⬆️ Import KPI CSV", type=["csv"])
 
 if uploaded is not None:
@@ -326,21 +334,18 @@ if uploaded is not None:
                     created
                 ))
 
-            cursor.executemany("""
+            run("""
                 INSERT INTO kpi_entries
                 (employee_name, department, kpi1, kpi2, kpi3, kpi4, total_score, rating, created_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, data_to_insert)
-            conn.commit()
+            """, many=True, data=data_to_insert)
 
             st.success(f"✅ Imported {len(data_to_insert)} rows successfully.")
             st.info("Page refresh karke imported data table me dikh jayega.")
-
     except Exception as e:
         st.error(f"Import failed: {e}")
 
 st.markdown('</div>', unsafe_allow_html=True)
-
 st.write("")
 
 # ---------------- TABLE ----------------
