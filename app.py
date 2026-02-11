@@ -12,51 +12,45 @@ from urllib.parse import quote_plus
 st.set_page_config(page_title="Yash Gallery – KPI System", page_icon="📊", layout="wide")
 
 # ==================================================
-# DB URL BUILDER (No need 1-line DATABASE_URL)
+# DB URL BUILDER (Short secrets -> URL)
 # ==================================================
 def build_db_url_from_secrets() -> str | None:
-    """
-    Secrets me agar DB_USER, DB_PASSWORD, DB_HOST, DB_NAME mil jaye
-    to yahin se postgresql url ban jayega.
-    """
     try:
-        user = st.secrets.get("DB_USER", "").strip()
-        pwd = st.secrets.get("DB_PASSWORD", "").strip()
-        host = st.secrets.get("DB_HOST", "").strip()
-        dbn = st.secrets.get("DB_NAME", "").strip()
-        params = st.secrets.get("DB_PARAMS", "").strip()
+        user = str(st.secrets.get("DB_USER", "")).strip()
+        pwd = str(st.secrets.get("DB_PASSWORD", "")).strip()
+        host = str(st.secrets.get("DB_HOST", "")).strip()
+        dbn = str(st.secrets.get("DB_NAME", "")).strip()
+        params = str(st.secrets.get("DB_PARAMS", "")).strip()
     except Exception:
         return None
 
     if not (user and pwd and host and dbn):
         return None
 
-    # password URL safe
     pwd_enc = quote_plus(pwd)
-
     url = f"postgresql://{user}:{pwd_enc}@{host}/{dbn}"
     if params:
         url += f"?{params}"
     return url
 
 def get_database_url() -> str:
-    # 1) Build from short secrets (recommended)
     url = build_db_url_from_secrets()
     if url:
         return url
 
-    # 2) If user still wants DATABASE_URL style (optional)
+    # Optional: if you ever manage to set DATABASE_URL
     try:
         if "DATABASE_URL" in st.secrets:
             return str(st.secrets["DATABASE_URL"]).strip()
     except Exception:
         pass
 
+    # Optional: env var
     env_url = os.getenv("DATABASE_URL", "").strip()
     if env_url:
         return env_url
 
-    # 3) Fallback SQLite (local use)
+    # Fallback SQLite (local only)
     os.makedirs("data", exist_ok=True)
     sqlite_path = os.path.abspath(os.path.join("data", "kpi_data.db"))
     return f"sqlite:///{sqlite_path}"
@@ -65,10 +59,14 @@ def get_database_url() -> str:
 def get_engine():
     db_url = get_database_url()
 
-    # Neon/PG needs sslmode=require usually; if missing, add
+    # Ensure sslmode on postgres if missing
     if db_url.startswith("postgres") and "sslmode=" not in db_url:
         joiner = "&" if "?" in db_url else "?"
         db_url = db_url + f"{joiner}sslmode=require"
+
+    # Use psycopg driver (best for Python 3.13)
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
     return create_engine(db_url, pool_pre_ping=True, future=True)
 
@@ -77,21 +75,21 @@ engine = get_engine()
 def is_postgres() -> bool:
     return engine.url.get_backend_name() in ("postgresql", "postgres")
 
-def now_str():
+def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def compute_rating(total_score: int) -> str:
-    # total_score range 4..400
-    if total_score >= 320:
+def compute_rating(total: int) -> str:
+    # total range 4..400
+    if total >= 320:
         return "Excellent"
-    if total_score >= 240:
+    if total >= 240:
         return "Good"
-    if total_score >= 160:
+    if total >= 160:
         return "Average"
     return "Needs Improvement"
 
 # ==================================================
-# UI CSS (Glass + White strips)
+# UI CSS (Glass + white strips)
 # ==================================================
 st.markdown("""
 <style>
@@ -169,41 +167,72 @@ footer {visibility:hidden;}
 """, unsafe_allow_html=True)
 
 # ==================================================
-# INIT DB TABLES
+# DB INIT (works on Postgres + SQLite)
 # ==================================================
 def init_db():
     with engine.begin() as conn:
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS employees (
-            id SERIAL PRIMARY KEY,
-            employee_name TEXT UNIQUE,
-            department TEXT,
-            is_active INTEGER DEFAULT 1,
-            created_at TEXT
-        )
-        """))
+        backend = engine.url.get_backend_name()
 
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS kpi_entries (
-            id SERIAL PRIMARY KEY,
-            employee_name TEXT,
-            department TEXT,
-            kpi1 INTEGER,
-            kpi2 INTEGER,
-            kpi3 INTEGER,
-            kpi4 INTEGER,
-            total_score INTEGER,
-            rating TEXT,
-            created_at TEXT
-        )
-        """))
-
-        try:
+        if backend in ("postgresql", "postgres"):
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS employees (
+                    id SERIAL PRIMARY KEY,
+                    employee_name TEXT UNIQUE,
+                    department TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kpi_entries (
+                    id SERIAL PRIMARY KEY,
+                    employee_name TEXT,
+                    department TEXT,
+                    kpi1 INTEGER,
+                    kpi2 INTEGER,
+                    kpi3 INTEGER,
+                    kpi4 INTEGER,
+                    total_score INTEGER,
+                    rating TEXT,
+                    created_at TEXT
+                )
+            """))
+            # indexes
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_dept ON kpi_entries(department)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_created ON kpi_entries(created_at)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_emp ON kpi_entries(employee_name)"))
-        except Exception:
-            pass
+
+        else:
+            # SQLite compatible
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS employees (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    employee_name TEXT UNIQUE,
+                    department TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kpi_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    employee_name TEXT,
+                    department TEXT,
+                    kpi1 INTEGER,
+                    kpi2 INTEGER,
+                    kpi3 INTEGER,
+                    kpi4 INTEGER,
+                    total_score INTEGER,
+                    rating TEXT,
+                    created_at TEXT
+                )
+            """))
+            try:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_dept ON kpi_entries(department)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_created ON kpi_entries(created_at)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_kpi_emp ON kpi_entries(employee_name)"))
+            except Exception:
+                pass
 
 init_db()
 
@@ -233,17 +262,12 @@ def seed_if_empty():
 seed_if_empty()
 
 def get_active_employees_df() -> pd.DataFrame:
-    return pd.read_sql(
-        text("SELECT employee_name, department FROM employees WHERE is_active=1 ORDER BY employee_name"),
-        engine
-    )
+    return pd.read_sql(text("SELECT employee_name, department FROM employees WHERE is_active=1 ORDER BY employee_name"), engine)
 
 def add_employee(name: str, dept: str):
     with engine.begin() as conn:
-        conn.execute(
-            text("INSERT INTO employees (employee_name, department, is_active, created_at) VALUES (:n,:d,1,:t)"),
-            {"n": name, "d": dept, "t": now_str()}
-        )
+        conn.execute(text("INSERT INTO employees (employee_name, department, is_active, created_at) VALUES (:n,:d,1,:t)"),
+                     {"n": name, "d": dept, "t": now_str()})
 
 def deactivate_employee(name: str):
     with engine.begin() as conn:
@@ -269,13 +293,13 @@ def load_kpis(dept_filter: str, date_range, name_search: str) -> pd.DataFrame:
         params["dept"] = dept_filter
 
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-        start_date, end_date = date_range
+        s, e = date_range
         if is_postgres():
             where += " AND CAST(created_at AS DATE) BETWEEN CAST(:s AS DATE) AND CAST(:e AS DATE)"
         else:
             where += " AND date(created_at) BETWEEN date(:s) AND date(:e)"
-        params["s"] = str(start_date)
-        params["e"] = str(end_date)
+        params["s"] = str(s)
+        params["e"] = str(e)
 
     if (name_search or "").strip():
         where += " AND lower(employee_name) LIKE :nm"
@@ -331,7 +355,6 @@ with st.sidebar:
         WHERE department IS NOT NULL AND department <> ''
         ORDER BY department
     """), engine)
-
     dept_list = dept_rows["department"].dropna().tolist() if not dept_rows.empty else []
     dept_filter = st.selectbox("Department", ["All"] + dept_list)
 
@@ -341,7 +364,6 @@ with st.sidebar:
     st.write("")
     with st.expander("👥 Manage Employees (Admin)", expanded=False):
         st.caption("Add employee here so Entry me dropdown aayega.")
-
         with st.form("add_emp_form", clear_on_submit=True):
             n = st.text_input("Employee Name (unique)")
             d = st.selectbox("Department", ["Fabric", "Merchant", "Sampling", "Cutting", "Finishing", "Dispatch", "Admin", "Sales", "Accounts"])
