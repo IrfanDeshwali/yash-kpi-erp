@@ -145,13 +145,24 @@ def verify_password(password: str, hashed: str, salt: str) -> bool:
 # DATABASE INITIALIZATION
 # ============================================================
 def initialize_database():
-    """Initialize all database tables"""
+    """Initialize database WITHOUT dropping existing data"""
     try:
-        # Drop all tables for clean slate
-        execute_query("""
-            DROP TABLE IF EXISTS audit_log, kpi_entries, users, employees, 
-            departments, app_settings, kpi_master, kpi_weights, rating_rules CASCADE
-        """)
+        # Check if tables exist
+        table_check = execute_query("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'kpi_entries'
+            )
+        """, fetch_one=True)
+        
+        tables_exist = table_check[0] if table_check else False
+        
+        if tables_exist:
+            st.info("✅ Database exists. Data preserved.")
+            return True
+        
+        # First-time setup
+        st.info("🔄 First-time database setup...")
         
         # Create departments table
         execute_query("""
@@ -291,17 +302,17 @@ def initialize_database():
             execute_query("INSERT INTO departments (department_name, is_active, created_at) VALUES (%s, %s, %s) ON CONFLICT (department_name) DO NOTHING", 
                         [dept_name, True, datetime.now()])
         
+        st.success("✅ Database initialized with sample data!")
         return True
     except Exception as e:
         st.error(f"❌ Database initialization error: {str(e)}")
         return False
 
-# Initialize database on first run
+# Initialize database (preserve data)
 if "db_initialized" not in st.session_state:
-    with st.spinner("🔄 Initializing database..."):
+    with st.spinner("🔄 Checking database..."):
         if initialize_database():
             st.session_state.db_initialized = True
-            st.success("✅ Database initialized!")
 
 # ============================================================
 # AUDIT LOG
@@ -462,8 +473,11 @@ def show_login_page():
     st.markdown("---")
     st.markdown("""
     <div class='small' style='text-align:center'>
-        <b>🔑 Default Credentials:</b><br>
-        Username: <code>admin</code> | Password: <code>admin123</code>
+        <b>🔑 Default Login:</b><br>
+        Username: <code>admin</code> | Password: <code>admin123</code><br><br>
+        <b>💾 Data Persistence:</b><br>
+        ✅ All data permanently saved<br>
+        ✅ Refresh-safe, only manual delete removes data
     </div>
     """, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -540,6 +554,13 @@ with st.sidebar:
     
     date_range = st.date_input("📅 Date Range", value=[])
     rating_filter = st.selectbox("⭐ Rating", ["All", "Excellent", "Good", "Average", "Needs Improvement"])
+    
+    # Data status
+    st.markdown("---")
+    st.markdown("### 💾 Data Status")
+    total_saved = len(execute_query("SELECT id FROM kpi_entries", fetch=True) or [])
+    st.success(f"✅ {total_saved} saved")
+    st.info("🔒 Persistent")
 
 # ============================================================
 # HEADER
@@ -549,7 +570,7 @@ col_h1, col_h2 = st.columns([3, 2])
 
 with col_h1:
     st.title("📊 Yash Gallery – KPI Management")
-    st.caption("🔐 Secure • 👥 Multi-User • 📋 Audit Trail • 📈 Analytics")
+    st.caption("💾 Persistent Data • 🔐 Secure • 👥 Multi-User • 📈 Analytics")
 
 with col_h2:
     st.markdown(f"""
@@ -848,6 +869,7 @@ if menu == "Entry":
             if result:
                 log_action(username, "CREATE_KPI", f"{emp} - {score}")
                 st.success(f"✅ Saved! **Score:** {score} | **Rating:** {rating}")
+                st.info("💾 Data permanently saved to database!")
                 st.balloons()
                 st.rerun()
             else:
@@ -889,7 +911,7 @@ if menu in ["Records", "My Records"]:
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            st.markdown(f"**Total:** {len(df)}")
+            st.markdown(f"**Total:** {len(df)} records (💾 Permanently saved)")
         
         with col2:
             csv = df.to_csv(index=False).encode('utf-8')
@@ -902,7 +924,7 @@ if menu in ["Records", "My Records"]:
                              f"kpi_{datetime.now().strftime('%Y%m%d')}.csv",
                              "application/vnd.ms-excel", use_container_width=True)
     else:
-        st.info("📌 No records")
+        st.info("📌 No records. Once added, data will be saved permanently.")
     
     st.markdown("</div>", unsafe_allow_html=True)
     
@@ -1619,11 +1641,11 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="card" style="text-align:center">', unsafe_allow_html=True)
 st.markdown(f"""
 <div class='small'>
-    <b>Yash Gallery KPI System v3.5 - Production Ready</b><br>
+    <b>Yash Gallery KPI System v4.0 - Data Persistence Edition</b><br>
     👤 {full_name} ({user_role.upper()}) | 🕒 Active Session<br>
-    🔐 Secure • 👥 Multi-User • 📋 Audit Trail • 📊 Real-Time Analytics<br>
+    💾 Permanent Storage • 🔐 Secure • 👥 Multi-User • 📈 Real-Time<br>
     © 2024 Yash Gallery | Built with Streamlit + PostgreSQL (Neon)<br>
-    🚀 100% Stable • 🔒 Tested • 📈 Production Ready
+    ✅ Data Persists Forever • 🔄 Refresh-Safe • 📈 Production Ready
 </div>
 """, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
