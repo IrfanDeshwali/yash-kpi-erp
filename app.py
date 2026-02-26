@@ -1642,7 +1642,7 @@ st.markdown(f"""
     <b>Yash Gallery KPI System v4.0 - Data Persistence Edition</b><br>
     👤 {full_name} ({user_role.upper()}) | 🕒 Active Session<br>
     💾 Permanent Storage • 🔐 Secure • 👥 Multi-User • 📈 Real-Time<br>
-    © 2024 Yash Gallery | Built with Streamlit + PostgreSQL (Neon)<br>
+    © 2026 Yash Gallery | Built with Streamlit + PostgreSQL (Neon)<br>
     ✅ Data Persists Forever • 🔄 Refresh-Safe • 📈 Production Ready
 </div>
 """, unsafe_allow_html=True)
