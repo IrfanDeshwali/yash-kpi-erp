@@ -473,8 +473,6 @@ def show_login_page():
     st.markdown("---")
     st.markdown("""
     <div class='small' style='text-align:center'>
-        <b>🔑 Default Login:</b><br>
-        Username: <code>admin</code> | Password: <code>admin123</code><br><br>
         <b>💾 Data Persistence:</b><br>
         ✅ All data permanently saved<br>
         ✅ Refresh-safe, only manual delete removes data
