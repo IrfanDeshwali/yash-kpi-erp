@@ -13,7 +13,7 @@ import secrets
 # PAGE CONFIGURATION
 # ============================================================
 st.set_page_config(
-    page_title="Yash Gallery – KPI System",
+    page_title="Yash Gallery – Key Performance Indicators",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -475,7 +475,7 @@ def show_login_page():
     <div class='small' style='text-align:center'>
         <b>💾 Data Persistence:</b><br>
         ✅ All data permanently saved<br>
-        ✅ Refresh-safe, only manual delete removes data
+        ✅ Software create by Yash Gallery Team
     </div>
     """, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
