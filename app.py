@@ -567,7 +567,7 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 col_h1, col_h2 = st.columns([3, 2])
 
 with col_h1:
-    st.title("📊 Yash Gallery – KPI Management")
+    st.title("Yash Gallery – Key Performance Indicators")
     st.caption("💾 Persistent Data • 🔐 Secure • 👥 Multi-User • 📈 Analytics")
 
 with col_h2:
