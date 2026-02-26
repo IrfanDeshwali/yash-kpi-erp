@@ -445,7 +445,7 @@ def require_auth(required_role: str = "employee"):
 def show_login_page():
     """Show login page"""
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    st.markdown("## 🔐 Yash Gallery KPI System")
+    st.markdown("## 🔐 Yash Gallery Key Performance Indicators")
     st.markdown("### Welcome Back!")
     st.markdown("---")
     
