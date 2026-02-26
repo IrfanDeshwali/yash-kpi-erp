@@ -1320,9 +1320,9 @@ if menu == "Users":
             
             with col2:
                 new_fullname = st.text_input("Full Name", placeholder="e.g., John Doe")
-                new_role = st.selectbox("Role", ["employee", "manager", "admin"])
+                new_role = st.selectbox("Role", ["Employee", "Manager", "Admin", "HR"])
                 
-                if new_role in ["employee", "manager"]:
+                if new_role in ["Employee", "Manager"]:
                     active_emps = get_active_employees()
                     emp_list = [e[0] for e in active_emps]
                     new_emp_name = st.selectbox("Link Employee", [""] + emp_list)
